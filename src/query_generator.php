@@ -26,14 +26,14 @@ class QueryGenerator {
      * Constructor initializes the query generator with configuration and shared memory
      * @param Configuration $config Configuration object containing process settings
      */
-    public function __construct(Configuration $config) {
+    public function __construct(Configuration $config, $main_script_path) {
         $this->config = $config;
         $this->process_index = $config->get('process_index');
         $this->load_info = $this->parseLoadCommand($config->get('load_command'));
         $this->cache_file_name = $this->generateCacheFileName();
         
         // Get the same shared memory segment
-        $stop_shm_key = ftok(dirname(__FILE__) . '/../manticore-load', 'x');
+        $stop_shm_key = ftok($main_script_path, 'x');
         $this->stop_shm_id = shmop_open($stop_shm_key, "w", 0, 0);
     }
     

@@ -37,7 +37,7 @@ function findRequiredFile($filename) {
     ];
 
     foreach ($share_dirs as $share_dir) {
-        $path = $share_dir . '/manticore/modules/manticore-load/src/' . $filename;
+        $path = $share_dir . '/manticore/modules/manticore-load/' . $filename;
         if (file_exists($path)) {
             return $path;
         }
@@ -359,7 +359,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     }
 
     // Generate queries for this process
-    $query_generator = new QueryGenerator($process_configuration);  // Now includes process index
+    $query_generator = new QueryGenerator($process_configuration, __FILE__);  // Now includes process index
     $batches = $query_generator->generateQueries($config->get('quiet'));
 
     // Show prepared queries in verbose mode

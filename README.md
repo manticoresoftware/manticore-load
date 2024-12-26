@@ -41,7 +41,7 @@ Just install `manticore-extra` dev package or release version higher than 6.3.8.
 2. Run:
    ```
    cd manticore-load
-   ./manticore-load --help
+   manticore-load --help
    ```
 
 ---
@@ -55,7 +55,7 @@ Run `manticore-load` with a variety of options to simulate workloads:
 Insert 1,000,000 documents in batches of 1,000:
 
 ```bash
-./manticore-load \
+manticore-load \
   --batch-size=1000 \
   --threads=4 \
   --total=1000000 \
@@ -68,7 +68,7 @@ Insert 1,000,000 documents in batches of 1,000:
 Run 1,000 search queries:
 
 ```bash
-./manticore-load \
+manticore-load \
   --threads=4 \
   --total=1000 \
   --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
@@ -79,7 +79,7 @@ Run 1,000 search queries:
 Run multiple workloads simultaneously:
 
 ```bash
-./manticore-load \
+manticore-load \
   --host=127.0.0.1 \
   --port=9306 \
   --batch-size=10000 \

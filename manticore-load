@@ -1,0 +1,527 @@
+#!/usr/bin/env manticore-executor
+<?php
+
+/*
+Copyright (c) Manticore Software Ltd.
+
+This file is part of the manticore-load tool and is licensed under the MIT License.
+For full license details, see the LICENSE file in the project root.
+
+Source code available at: https://github.com/manticoresoftware/manticore-load
+*/
+
+// Enable strict error reporting for MySQL
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+// Memory limit setting
+ini_set('memory_limit', '8G');
+
+// Enable signal handling
+declare(ticks = 1);
+
+// Function to find required files
+function findRequiredFile($filename) {
+    // First try the default location relative to current script
+    $default_path = dirname(__FILE__) . '/src/' . $filename;
+    if (file_exists($default_path)) {
+        return $default_path;
+    }
+
+    // Common share directories to check
+    $share_dirs = [
+        '/usr/share',              // Linux standard
+        '/opt/homebrew/share',     // MacOS arm
+        '/usr/local/share',        // BSD/MacOS common
+        '/opt/share',              // Alternative Linux
+        'C:/Program Files/share',  // Windows
+    ];
+
+    foreach ($share_dirs as $share_dir) {
+        $path = $share_dir . '/manticore/modules/manticore-load/src/' . $filename;
+        if (file_exists($path)) {
+            return $path;
+        }
+    }
+
+    die("Error: Required file '$filename' not found in default location or share directories.\n");
+}
+
+// Load required files
+$required_files = [
+    'configuration.php',
+    'query_generator.php',
+    'statistics.php',
+    'progress_display.php',
+    'console_output.php'
+];
+
+foreach ($required_files as $file) {
+    require_once findRequiredFile($file);
+}
+
+// Global variables
+$stop_requested = false;
+
+// Create configuration instance
+$config = new Configuration($argv);
+
+// Set colorization based on config and terminal check
+$useColors = !$config->get('no_color') && posix_isatty(STDOUT);
+ProgressDisplay::setColorization($useColors);
+
+// Get all processes configurations
+$processes = $config->getProcesses();
+$child_pids = [];
+
+// Create shared memory segment for synchronization
+$shm_key = ftok(__FILE__, 't') & 0xFFFF; // Ensure key is within valid range
+if ($shm_key === -1) {
+    // Fallback to a static key if ftok fails
+    $shm_key = 0x742E; // Arbitrary but unique key
+}
+
+// Calculate required bytes: 1 byte for total processes, then 2 bytes per process (1 for ready, 1 for start signal)
+$num_processes = count($processes);
+$shm_size = 1 + ($num_processes * 2);
+$shm_id = shmop_open($shm_key, "c", 0644, $shm_size);
+if ($shm_id === false) {
+    die("Failed to create shared memory segment. Error: " . error_get_last()['message'] . "\n");
+}
+// Initialize: First byte is total processes, then all zeros for ready/start states
+shmop_write($shm_id, pack("C", $num_processes) . str_repeat("\0", $num_processes * 2), 0);
+$sem_key = ftok(__FILE__, 's');
+$sem_id = sem_get($sem_key, 1, 0644, 1);  // Create semaphore
+if ($sem_id === false) {
+    die("Failed to create semaphore\n");
+}
+
+$stop_shm_key = ftok(__FILE__, 'x');
+$stop_shm_id = shmop_open($stop_shm_key, "c", 0644, 1);  // 1 byte for stop flag
+if ($stop_shm_id === false) {
+    die("Failed to create stop signal shared memory segment\n");
+}
+// Initialize stop flag to 0
+shmop_write($stop_shm_id, "\0", 0);
+
+// This function waits for an idle mysql connection for the $query, runs it and exits
+function process($query, &$all_links, &$requests, &$statistics) {
+    try {
+        foreach ($all_links as $k=>$link) {
+            if (@$requests[$k]) continue;
+            $start_time = microtime(true);
+            mysqli_query($link, $query, MYSQLI_ASYNC);
+            @$requests[$k] = $start_time;
+            return true;
+        }
+        do {
+            $links = $errors = $reject = array();
+            foreach ($all_links as $link) {
+                $links[] = $errors[] = $reject[] = $link;
+            }
+            $count = @mysqli_poll($links, $errors, $reject, 0, 100);
+            if ($count > 0) {
+                foreach ($links as $j=>$link) {
+                    $res = @mysqli_reap_async_query($links[$j]);
+                    foreach ($all_links as $i=>$link_orig) if ($all_links[$i] === $links[$j]) break;
+                    if ($link->error) {
+                        echo "ERROR: {$link->error}\n";
+                        if (!mysqli_ping($link)) {
+                            echo "ERROR: mysql connection is down, removing it from the pool\n";
+                            unset($all_links[$i]);
+                            unset($requests[$i]);
+                        }
+                        return false;
+                    }
+                    if ($res === false and !$link->error) continue;
+                    if (is_object($res)) {
+                        mysqli_free_result($res);
+                    }
+                    $latency = microtime(true) - $requests[$i];
+                    $statistics->addLatency($latency * 1000);
+                    $requests[$i] = microtime(true);
+                    mysqli_query($link, $query, MYSQLI_ASYNC);
+                    return true;
+                }
+            };
+        } while (true);
+        return true;
+    } catch (Exception $e) {
+        echo "ERROR while processing query \"".substr($query, 0, 20)."\": \"" . $e->getMessage() . "\"\n";
+        return false;
+    }
+}
+
+// Signal handler for graceful shutdown
+function sigintHandler($signo) {
+    global $stop_shm_id;
+    if ($signo === SIGINT) {
+        global $config;
+        if (!$config->get('quiet')) {
+            ConsoleOutput::writeLine("Stopping gracefully...");
+        }
+        // Set stop flag in shared memory
+        shmop_write($stop_shm_id, "\1", 0);
+    }
+}
+
+// Install signal handler
+pcntl_signal(SIGINT, 'sigintHandler');
+
+// Fork a process for each configuration
+$parent_pid = getmypid(); // Store parent PID before forking
+
+// After signal handler setup, add this new function
+function terminateChildren($child_pids) {
+    foreach ($child_pids as $pid => $process_index) {
+        posix_kill($pid, SIGTERM);
+    }
+}
+
+foreach ($processes as $process_index => $process_config) {
+    $pid = pcntl_fork();
+    
+    if ($pid == -1) {
+        // Fork failed
+        die("Could not fork process $process_index\n");
+    } elseif ($pid) {
+        // Parent process
+        $child_pids[$pid] = $process_index;
+        continue;
+    } else {
+        // Child process
+        try {
+            run_process($process_config, $config, $process_index, $num_processes);
+            exit(0);
+        } catch (Exception $e) {
+            echo "Process $process_index failed: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+    }
+}
+
+// After forking processes, in the parent process
+if ($parent_pid === getmypid()) {
+    // Collect child PIDs
+    $childPids = [];
+    foreach ($child_pids as $pid => $process_index) {
+        $childPids[] = $pid;
+    }
+    
+    // Wait for all children to be ready
+    while (true) {
+        // Check if any child has terminated
+        foreach ($child_pids as $pid => $process_index) {
+            $res = pcntl_waitpid($pid, $status, WNOHANG);
+            if ($res > 0) {
+                // Child process terminated
+                if (pcntl_wexitstatus($status) != 0) {
+                    echo "Process $process_index failed early, terminating all processes...\n";
+                    terminateChildren($child_pids);
+                    exit(1);
+                }
+            }
+        }
+
+        // Check ready state of all processes
+        $all_ready = true;
+        for ($i = 1; $i <= count($processes); $i++) {
+            $ready_state = ord(shmop_read($shm_id, 1 + $i, 1));
+            if ($ready_state !== 1) {
+                $all_ready = false;
+                break;
+            }
+        }
+
+        if ($all_ready) {
+            // Signal all processes to start
+            for ($i = 0; $i < count($processes); $i++) {
+                $start_offset = 1 + count($processes) + $i;
+                shmop_write($shm_id, "\1", $start_offset);
+            }
+            break;
+        }
+
+        usleep(1000000);  // Sleep for 1ms
+        pcntl_signal_dispatch();
+    }
+    
+    // Start monitoring progress files
+    ProgressDisplay::monitorProgressFiles($childPids, $config);
+
+    // Clean up shared memory and semaphore (only in parent process)
+    shmop_delete($shm_id);
+    sem_remove($sem_id);
+    shmop_delete($stop_shm_id);
+}
+
+// Parent process: wait for all children to complete
+$exit_code = 0;
+foreach ($child_pids as $pid => $process_index) {
+    $status = 0;
+    pcntl_waitpid($pid, $status);
+    if (pcntl_wexitstatus($status) != 0) {
+        echo "Process $process_index failed with status " . pcntl_wexitstatus($status) . "\n";
+        $exit_code = 1;
+    }
+}
+
+exit($exit_code);
+
+// Main process execution function
+function run_process($process_config, $config, $process_index, $num_processes) {
+    global $shm_id, $sem_id, $stop_shm_id;
+    
+    // Clone configuration for this specific process
+    $process_configuration = new Configuration([]);
+    
+    // Inherit global settings from main configuration
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms'];
+    foreach ($global_settings as $setting) {
+        $process_configuration->set($setting, $config->get($setting));
+    }
+
+    // Set process-specific settings
+    foreach ($process_config as $key => $value) {
+        $process_configuration->set($key, $value);
+    }
+
+    // Ensure load_command is set
+    if (isset($process_config['load'])) {
+        $process_configuration->set('load_command', $process_config['load']);
+    }
+
+    // Set process index in configuration
+    $process_configuration->set('process_index', $process_index);
+
+    // Initialize MySQL connections for this process
+    $all_links = [];
+    $requests = [];
+    for ($i = 0; $i <= $process_config['threads']; $i++) {
+        $m = mysqli_connect($config->get('host'), '', '', '', $config->get('port'));
+        if (!$m) {
+            throw new Exception("Cannot connect to Manticore at {$config->get('host')}:{$config->get('port')}: " . mysqli_connect_error());
+        }
+        $all_links[] = $m;
+    }
+
+    // Handle initialization for this process
+    if (isset($process_config['init_command']) && 
+        preg_match('/create\s+table\s+(\w+)/i', $process_config['init_command'], $matches)) {
+        $table_name = $matches[1];
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $table_name)) {
+            throw new Exception("Invalid table name. Use only letters, numbers and underscore.");
+        }
+        
+        // Handle drop if needed
+        if (!empty($process_config['drop'])) {
+            try {
+                $drop_query = "DROP TABLE IF EXISTS $table_name";
+                if (!$config->get('quiet')) {
+                    ConsoleOutput::writeLine("Process $process_index: Dropping table: $drop_query");
+                }
+                mysqli_query($all_links[0], $drop_query);
+            } catch (mysqli_sql_exception $e) {
+                echo "Process $process_index failed: Error dropping table: " . $e->getMessage() . "\n";
+                exit(1); // Exit with error code to trigger parent process handling
+            }
+        }
+    }
+
+    // Execute init commands
+    if (isset($process_config['init_command']) && !empty($process_config['init_command'])) {
+        $pattern = '/(?:[^;"\']|"[^"]*"|\'[^\']*\')+/';
+        preg_match_all($pattern, $process_config['init_command'], $matches);
+        
+        foreach ($matches[0] as $init_query) {
+            $init_query = trim($init_query);
+            if (empty($init_query)) continue;
+            
+            if (!$config->get('quiet')) {
+                echo "Process $process_index: Executing init command: " . $init_query . "\n";
+            }
+            
+            try {
+                mysqli_query($all_links[0], $init_query);
+            } catch (mysqli_sql_exception $e) {
+                echo "Process $process_index WARNING: Error executing init command \"" . substr($init_query, 0, 50) . 
+                     (strlen($init_query) > 50 ? "..." : "") . "\": " . $e->getMessage() . "\n";
+            }
+        }
+    }
+
+    // Extract table name from load command if not found in init command
+    if (!isset($table_name) && preg_match('/(?:from|into)\s+([^\s(,]+)/i', $process_config['load_command'], $matches)) {
+        $table_name = $matches[1];
+    }
+    // Validate table name if found
+    if (isset($table_name) && !preg_match('/^[a-zA-Z0-9_:]+$/', $table_name)) {
+        die("Error: Invalid table name. Use only letters, numbers and underscore.\n");
+    }
+
+    // Generate queries for this process
+    $query_generator = new QueryGenerator($process_configuration);  // Now includes process index
+    $batches = $query_generator->generateQueries($config->get('quiet'));
+
+    // Show prepared queries in verbose mode
+    if ($config->get('verbose')) {
+        echo "\nProcess $process_index prepared queries:\n";
+        echo "--------------------------------------------------------------------------------\n";
+        foreach (array_slice($batches, 0, 3) as $query) {
+            echo $query . "\n";
+        }
+        if (count($batches) > 3) {
+            echo "... (" . (count($batches) - 3) . " more queries)\n";
+        }
+        echo "--------------------------------------------------------------------------------\n\n";
+    }
+
+    // Handle iterations
+    if ($process_config['iterations'] > 1) {
+        $batchesMulti = [];
+        for ($n = 0; $n < $process_config['iterations']; $n++) {
+            $batchesMulti = array_merge($batchesMulti, $batches);
+        }
+        $batches = $batchesMulti;
+    }
+
+    // Initialize components
+    $monitoring = new MonitoringStats($config->get('host'), $config->get('port'), $table_name ?? null);
+
+    // Create statistics instance for this process
+    $statistics = new Statistics(
+        $process_config['batch-size'],
+        strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
+        strpos(strtolower($process_config['load_command']), 'replace') === 0,
+        $config->get('latency-histograms')
+    );
+
+    // Create progress display instance
+    $progress = new ProgressDisplay(
+        $process_config['quiet'],
+        count($batches), 
+        strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
+        strpos(strtolower($process_config['load_command']), 'replace') === 0,
+        $config->get('latency-histograms'),
+        $statistics
+    );
+
+    // Synchronization: Signal readiness and wait for start
+    if (!sem_acquire($sem_id)) {
+        throw new Exception("Failed to acquire semaphore");
+    }
+    
+    // Set ready bit for this process (offset is 1 + process_index)
+    $ready_offset = 1 + $process_index;
+    shmop_write($shm_id, "\1", $ready_offset);
+    sem_release($sem_id);
+
+    // Wait for start signal from parent
+    while (true) {
+        if (!sem_acquire($sem_id)) {
+            throw new Exception("Failed to acquire semaphore");
+        }
+        
+        // Check start signal for this process (offset is 1 + num_processes + process_index)
+        $start_offset = 1 + $num_processes + ($process_index - 1);
+        $start_signal = ord(shmop_read($shm_id, $start_offset, 1));
+        sem_release($sem_id);
+        
+        if ($start_signal === 1) {
+            break;
+        }
+        usleep(1000000);  // Sleep for 1ms
+        pcntl_signal_dispatch();  // Allow CTRL-C handling while waiting
+    }
+
+    // Main execution loop with progress tracking
+    $t = microtime(true);
+    $processed_batches = 0;
+    $last_stats_time = $t;
+    $last_processed_batches = 0;
+    $progress_shown = false;
+    $progress_updated = microtime(true);
+
+    // Process each query batch
+    foreach ($batches as $query) {
+        if (!process($query, $all_links, $requests, $statistics)) {
+            throw new Exception("Process $process_index: ERROR processing query");
+        }
+        
+        // Update statistics and show progress
+        $processed_batches++;
+        $statistics->addOperations($process_config['batch-size'] ?? 1);
+        
+        // Update progress display every second
+        if ((microtime(true) - $progress_updated) >= 1.0) {
+            $progress->update(
+                $processed_batches, 
+                $process_config['batch-size'], 
+                $monitoring,
+                $statistics
+            );
+            $progress_updated = microtime(true);
+            $progress_shown = true;
+
+            // Check for stop signal
+            $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+            if ($stop_requested) {
+                if (!$config->get('quiet')) {
+                    ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
+                }
+                break;
+            }
+        }
+    }
+
+    // Show final progress if none was shown
+    if (!$progress_shown && !$config->get('quiet')) {
+        echo "Process $process_index: ";
+        $progress->showFinalProgress(
+            $processed_batches,
+            $process_config['batch-size'],
+            $t,
+            $last_processed_batches,
+            $last_stats_time,
+            $monitoring,
+            $statistics
+        );
+    }
+
+    // Update the WAIT state monitoring
+    if ($config->get('wait') && isset($table_name)) {
+        while (true) {
+            $stats = $monitoring->getStats();
+            if (!$config->get('quiet')) {
+                echo "Process $process_index: ";
+                $progress->update($processed_batches, $process_config['batch-size'], $stats);
+            }
+            if (!$stats['is_optimizing']) {
+                break;
+            }
+            sleep(1);
+        }
+    }
+
+    // Wait for workers to finish
+    do {
+        $links = $errors = $reject = array();
+        foreach ($all_links as $link) {
+            $links[] = $errors[] = $reject[] = $link;
+        }
+        $count = @mysqli_poll($links, $errors, $reject, 0, 100);
+    } while (count($all_links) != count($links) + count($errors) + count($reject));
+
+    // Close connections
+    foreach ($all_links as $link) {
+        mysqli_close($link);
+    }
+
+    // Close monitoring connection
+    $monitoring->close();
+
+    // Print final statistics
+    if (!$config->get('quiet')) {
+        echo "\nProcess $process_index Final Statistics:\n";
+    }
+    $statistics->printReport($config->get('quiet'));
+}

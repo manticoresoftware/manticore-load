@@ -1,0 +1,530 @@
+<?php
+
+/*
+Copyright (c) Manticore Software Ltd.
+
+This file is part of the manticore-load tool and is licensed under the MIT License.
+For full license details, see the LICENSE file in the project root.
+
+Source code available at: https://github.com/manticoresoftware/manticore-load
+*/
+
+/**
+ * ColorTrait provides terminal color formatting functionality
+ * Includes color constants and methods to enable/disable and apply colors
+ */
+trait ColorTrait {
+    private const COLOR_GREEN = "\033[32m";
+    private const COLOR_BLUE = "\033[34m";
+    private const COLOR_YELLOW = "\033[33m";
+    private const COLOR_RED = "\033[31m";
+    private const COLOR_RESET = "\033[0m";
+
+    private static bool $useColors = true;
+
+    public static function setColorization(bool $enabled): void {
+        self::$useColors = $enabled;
+    }
+
+    private static function colorize(string $text, string $color): string {
+        return self::$useColors ? $color . $text . self::COLOR_RESET : $text;
+    }
+} 
+
+/**
+ * ProgressDisplay handles the real-time display of data loading progress
+ * Supports both single and multi-process progress monitoring
+ */
+class ProgressDisplay {
+    use ColorTrait;
+
+    /**
+     * Format string for progress display output
+     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size growth, Size
+     */
+    private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-11s  %-10s\n";
+
+    private bool $quiet;
+    private int $total_batches;
+    private bool $is_insert;
+    private bool $use_histograms;
+    private ?object $statistics;
+    private float $last_update_time;
+    private int $last_processed_batches = 0;
+    private float $start_time;
+
+    private static ?array $prev_values = null;
+    private static ?float $prev_time = null;
+
+    private $tempFile;
+    private string $tempFilePath;
+
+    /**
+     * Initialize progress display
+     * 
+     * @param bool $quiet Suppress output if true
+     * @param int $total_batches Total number of batches to process
+     * @param bool $is_insert Whether operation is insert (vs update)
+     * @param bool $use_histograms Whether histograms are enabled
+     * @param ?object $statistics Statistics collector object
+     */
+    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics) {
+        $this->quiet = $quiet;
+        $this->total_batches = $total_batches;
+        $this->is_insert = $is_insert;
+        $this->use_histograms = $use_histograms;
+        $this->statistics = $statistics;
+        $this->start_time = microtime(true);
+        $this->last_update_time = $this->start_time;
+
+        if (!$quiet) {
+            $this->printHeader();
+        }
+
+        $this->initializeTempFile();
+    }
+
+    /**
+     * Creates temporary file to store progress data
+     * Used for inter-process communication in multi-process mode
+     * 
+     * @throws RuntimeException if file creation fails
+     */
+    private function initializeTempFile(): void {
+        $pid = getmypid();
+        $randomStr = bin2hex(random_bytes(4));
+        $this->tempFilePath = "/tmp/manticore_load_progress_{$pid}_{$randomStr}";
+        
+        $this->tempFile = @fopen($this->tempFilePath, 'w');
+        if ($this->tempFile === false) {
+            throw new RuntimeException("Failed to create temporary progress file: {$this->tempFilePath}");
+        }
+        
+        register_shutdown_function([$this, 'cleanup']);
+    }
+
+    public function cleanup(): void {
+        if ($this->tempFile) {
+            fclose($this->tempFile);
+        }
+        if (file_exists($this->tempFilePath)) {
+            unlink($this->tempFilePath);
+        }
+    }
+
+    private function printHeader() {
+        if ($this->quiet) {
+            return;
+        }
+        // Extract column widths from PROGRESS_FORMAT
+        preg_match_all('/%-(\d+)s/', self::$PROGRESS_FORMAT, $matches);
+        $widths = $matches[1];
+        
+        // Color the headers
+        $headers = [
+            self::colorize(str_pad("Time", $widths[0]), self::COLOR_BLUE),
+            self::colorize(str_pad("Elapsed", $widths[1]), self::COLOR_BLUE),
+            self::colorize(str_pad("Progress", $widths[2], ' '), self::COLOR_GREEN),
+            self::colorize(str_pad("QPS", $widths[3], ' '), self::COLOR_GREEN),
+            self::colorize(str_pad("DPS", $widths[4], ' '), self::COLOR_GREEN),
+            self::colorize(str_pad("CPU", $widths[5]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Workers", $widths[6]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Chunks", $widths[7]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Merging", $widths[8]), self::COLOR_RED),
+            self::colorize(str_pad("Size growth", $widths[9]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Size", $widths[10]), self::COLOR_YELLOW)
+        ];
+        
+        $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
+            return preg_replace('/\033\[\d+m/', '', $h);
+        }, $headers)));        
+    }
+
+    /**
+     * Updates progress display with current statistics
+     * Called periodically during data loading
+     * 
+     * @param int $processed_batches Number of batches processed so far
+     * @param int $batch_size Size of each batch
+     * @param object $common_monitoring Monitoring object with stats
+     * @param object $load_stats Load statistics object
+     */
+    public function update($processed_batches, $batch_size, $common_monitoring, $load_stats) {
+        $stats = $common_monitoring->getStats();
+
+        $now = microtime(true);
+        $interval_elapsed = $now - $this->last_update_time;
+        $total_elapsed = $now - $this->start_time;
+        $interval_batches = $processed_batches - $this->last_processed_batches;
+
+        $qps = self::calculateQPS($interval_batches, $interval_elapsed);
+        $load_stats->addQps($qps);
+        $progress = $this->total_batches > 0 ? round($processed_batches * 100 / $this->total_batches) . "%" : "N/A";
+        
+        $total_docs = $processed_batches * ($this->is_insert ? $batch_size : 1);
+        $dps = $interval_elapsed > 0 ? ($total_docs / $interval_elapsed) : 0;
+        
+        $time = date('H:i:s');
+        $stats['time'] = $time;
+        $stats['elapsed'] = $total_elapsed;
+        $stats['progress'] = $progress;
+        $stats['qps'] = (string)$qps;
+        $stats['dps'] = $this->is_insert ? ($dps >= 1000 ? sprintf("%.1fK", $dps/1000/$total_elapsed) : sprintf("%.0f", $dps/$total_elapsed)) : "-";
+        $stats['cpu'] = sprintf("%.4s", self::getCpuUsage());
+        $stats['workers'] = (string)$stats['thread_count'];
+        $stats['chunks'] = (string)$stats['disk_chunks'];
+        $stats['is_optimizing'] = $stats['is_optimizing'] ? "yes" : "";
+        $stats['growth_rate'] = $stats['growth_rate'];
+        $stats['size'] = self::formatBytes($stats['disk_bytes']);
+        $this->last_update_time = $now;
+        $this->last_processed_batches = $processed_batches;
+
+        if (!$this->quiet) {
+            $this->saveProgress($stats);
+        }
+    }
+
+    private function formatProgressLine($time, $elapsed, $progress, $qps, $dps, $cpu, $workers, $chunks, $merging, $write_speed, $size) {
+        // Extract column widths from PROGRESS_FORMAT
+        preg_match_all('/%-(\d+)s/', self::$PROGRESS_FORMAT, $matches);
+        $widths = $matches[1];
+        
+        // Format values with colors using widths from format string
+        $time = self::colorize(str_pad($time, $widths[0]), self::COLOR_BLUE);
+        $elapsed = self::colorize(str_pad(self::formatElapsedTime($elapsed), $widths[1]), self::COLOR_BLUE);
+        $progress = self::colorize(str_pad($progress, $widths[2]), self::COLOR_GREEN);
+        $qps = self::colorize(str_pad($qps, $widths[3]), self::COLOR_GREEN);
+        $dps = self::colorize(str_pad($dps, $widths[4]), self::COLOR_GREEN);
+        $cpu = self::colorize(str_pad($cpu, $widths[5]), self::COLOR_YELLOW);
+        $workers = self::colorize(str_pad($workers, $widths[6]), self::COLOR_YELLOW);
+        $chunks = self::colorize(str_pad($chunks, $widths[7]), self::COLOR_YELLOW);
+        $merging = $merging ? self::colorize(str_pad($merging, $widths[8]), self::COLOR_RED) : str_pad($merging, $widths[8]);
+        $write_speed = self::colorize(str_pad($write_speed, $widths[9]), self::COLOR_YELLOW);
+        $size = self::colorize(str_pad($size, $widths[10]), self::COLOR_YELLOW);
+        
+        return sprintf(self::$PROGRESS_FORMAT,
+            $time, $elapsed, $progress, $qps, $dps, $cpu, $workers,
+            $chunks, $merging, $write_speed, $size
+        );
+    }
+
+    public static function calculateQPS($batches, $time) {
+        return $time > 0 ? round($batches / max(0.001, $time)) : 0;
+    }
+
+    public static function formatElapsedTime($seconds) {
+        if ($seconds < 1) {
+            return sprintf("%dms", round($seconds * 1000));
+        } elseif ($seconds < 60) {
+            return sprintf("%.1fs", $seconds);
+        } else {
+            return sprintf("%02d:%02d", (int)($seconds/60), (int)$seconds%60);
+        }
+    }
+
+    /**
+     * Formats file size in human readable format (B, KB, MB, GB)
+     * 
+     * @param int $bytes Size in bytes
+     * @return string Formatted size with units
+     */
+    public static function formatBytes($bytes) {
+        $negative = $bytes < 0;
+        $bytes = abs($bytes);
+        
+        if ($bytes >= 1024*1024*1024) {
+            $formatted = sprintf("%.2fGB", $bytes / (1024*1024*1024));
+        } elseif ($bytes >= 1024*1024) {
+            $formatted = sprintf("%dMB", round($bytes / (1024*1024)));
+        } elseif ($bytes >= 1024) {
+            $formatted = sprintf("%dKB", round($bytes / 1024));
+        } else {
+            $formatted = sprintf("%dB", $bytes);
+        }
+        
+        return ($negative ? '-' : '') . $formatted;
+    }
+
+    /**
+     * Gets current CPU usage percentage
+     * Returns N/A on macOS or if unable to read /proc/stat
+     * 
+     * @return string CPU usage with % or "N/A"
+     */
+    public static function getCpuUsage() {
+        
+        if (PHP_OS === 'Darwin') {  // macOS
+            return "N/A";
+        }
+        
+        $curr = file_get_contents('/proc/stat');
+        $curr_time = microtime(true);
+        
+        if ($curr === false) return "N/A";
+        
+        $curr_values = explode(' ', trim(explode("\n", $curr)[0]));
+        $curr_values = array_values(array_filter(array_slice($curr_values, 1), 'strlen'));
+        $curr_values = array_map('intval', $curr_values);
+        
+        if (self::$prev_values === null) {
+            self::$prev_values = $curr_values;
+            self::$prev_time = $curr_time;
+            return "N/A";
+        }
+        
+        $time_delta = $curr_time - self::$prev_time;
+        if ($time_delta < 0.1) {  // Less than 100ms since last check
+            return "N/A";
+        }
+        
+        $curr_total = array_sum($curr_values);
+        $prev_total = array_sum(self::$prev_values);
+        
+        $curr_idle = $curr_values[3];
+        $prev_idle = self::$prev_values[3];
+        
+        if (($curr_total - $prev_total) == 0) {
+            return "N/A";
+        } else {
+            $cpu = round((1 - ($curr_idle - $prev_idle) / ($curr_total - $prev_total)) * 100, 1);
+        }
+        
+        self::$prev_values = $curr_values;
+        self::$prev_time = $curr_time;
+        
+        return round($cpu)."%";
+    }
+
+    public function showFinalProgress($processed_batches, $batch_size, $start_time, $last_processed_batches, $last_stats_time, $monitoring, $statistics) {
+        if ($this->quiet) {
+            return;
+        }
+
+        $this->start_time = $start_time;
+        $this->last_update_time = $last_stats_time;
+        $this->last_processed_batches = $last_processed_batches;
+        
+        $this->update($processed_batches, $batch_size, $monitoring, $statistics);
+    }
+
+    public function saveProgress($stats) {
+        // Write progress data to temp file
+        $stats['pid'] = getmypid();
+       
+        // Check if parent process is still running
+        $ppid = posix_getppid();
+        if ($ppid == 1 || !@posix_kill($ppid, 0)) {  // ppid=1 means parent died and process was reparented to init
+            fwrite(STDERR, "ERROR: Parent process is no longer running. Exiting...\n");
+            exit(1);
+        }
+        
+        if ($this->tempFile) {
+            fwrite($this->tempFile, json_encode($stats) . "\n");
+        }
+    }
+
+    /**
+     * Monitors progress files from multiple worker processes
+     * Combines and displays progress from all processes
+     * 
+     * @param array $pids Array of worker process IDs to monitor
+     */
+    public static function monitorProgressFiles($pids, $config) {
+        if (empty($pids)) {
+            return;
+        }
+
+        $linesBeforeHeader = 20;
+        $linesPrinted = 0;
+
+        // Create a mapping of PIDs to simple indices (1-based)
+        $pidToIndex = array_flip(array_values($pids));
+        array_walk($pidToIndex, function(&$value) {
+            $value += 1;  // Convert to 1-based index
+        });
+
+        // Calculate widths needed for multi-process display
+        $widths = [
+            'time' => 8,
+            'elapsed' => 8,
+        ];
+        
+        // Add widths for each process's columns
+        for ($i = 1; $i <= count($pids); $i++) {
+            $widths["progress_$i"] = 10;
+        }
+        for ($i = 1; $i <= count($pids); $i++) {
+            $widths["qps_$i"] = 7;
+        }
+        for ($i = 1; $i <= count($pids); $i++) {
+            $widths["dps_$i"] = 7;
+        }
+        
+        // Add widths for common columns
+        $widths = array_merge($widths, [
+            'cpu' => 6,
+            'workers' => 9,
+            'chunks' => 8,
+            'merging' => 8,
+            'growth' => 11,
+            'size' => 10
+        ]);
+
+        // Define new format string with adjusted widths
+        $format_parts = array_map(function($width) {
+            return "%-{$width}s";
+        }, array_values($widths));
+        
+        $multiProcessFormat = implode("  ", $format_parts) . "\n";
+
+        // Create display instance with modified format
+        $display = new self(false, 100, true, false, null);
+        self::$PROGRESS_FORMAT = $multiProcessFormat;
+
+        // Prepare process-specific headers
+        $headers = [
+            self::colorize(str_pad("Time", $widths['time']), self::COLOR_BLUE),
+            self::colorize(str_pad("Elapsed", $widths['elapsed']), self::COLOR_BLUE),
+        ];
+
+        // Add Progress, QPS, DPS headers - simplified for single process
+        if (count($pids) === 1) {
+            $headers[] = self::colorize(str_pad("Progress", $widths["progress_1"]), self::COLOR_GREEN);
+            $headers[] = self::colorize(str_pad("QPS", $widths["qps_1"]), self::COLOR_GREEN);
+            $headers[] = self::colorize(str_pad("DPS", $widths["dps_1"]), self::COLOR_GREEN);
+        } else {
+            // Add Progress headers
+            for ($i = 1; $i <= count($pids); $i++) {
+                $headers[] = self::colorize(str_pad(sprintf("%d:Progress", $i), $widths["progress_$i"]), self::COLOR_GREEN);
+            }
+            // Add QPS headers
+            for ($i = 1; $i <= count($pids); $i++) {
+                $headers[] = self::colorize(str_pad(sprintf("%d:QPS", $i), $widths["qps_$i"]), self::COLOR_GREEN);
+            }
+            // Add DPS headers
+            for ($i = 1; $i <= count($pids); $i++) {
+                $headers[] = self::colorize(str_pad(sprintf("%d:DPS", $i), $widths["dps_$i"]), self::COLOR_GREEN);
+            }
+        }
+
+        // Add common headers
+        $headers = array_merge($headers, [
+            self::colorize(str_pad("CPU", $widths['cpu']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Workers", $widths['workers']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Chunks", $widths['chunks']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Merging", $widths['merging']), self::COLOR_RED),
+            self::colorize(str_pad("Size growth", $widths['growth']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Size", $widths['size']), self::COLOR_YELLOW)
+        ]);
+
+        // Prepare header printing function
+        $printHeader = function() use ($headers, $multiProcessFormat) {
+            $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
+                return preg_replace('/\033\[\d+m/', '', $h);
+            }, $headers)));
+            
+            echo str_repeat("-", $header_length - 1) . "\n";
+            printf(self::$PROGRESS_FORMAT, ...$headers);
+            echo str_repeat("-", $header_length - 1) . "\n";
+        };
+
+        // Print initial header
+        if (!$config->get('quiet')) {
+            $printHeader();
+        }
+
+        while (true) {
+            $stats = [];
+            
+            $runningPids = [];
+            // Check which processes are still running
+            foreach ($pids as $pid) {
+                $status = 0;
+                $res = pcntl_waitpid($pid, $status, WNOHANG);
+                if ($res === 0) {  // Process is still running
+                    $runningPids[] = $pid;
+                }
+            }
+            
+            if (empty($runningPids)) {
+                break;
+            }
+            
+            // Try to read latest line from each process file
+            foreach ($runningPids as $pid) {
+                $pattern = "/tmp/manticore_load_progress_{$pid}_*";
+                $files = glob($pattern);
+                
+                if (!empty($files)) {
+                    $filepath = $files[0];
+                    
+                    if (file_exists($filepath)) {
+                        // Read the last line of the file
+                        $lines = file($filepath);
+                        if ($lines) {
+                            $lastLine = trim(end($lines));
+                            $processStats = json_decode($lastLine, true);
+                            if ($processStats) {
+                                $stats[$pid] = $processStats;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (!empty($stats)) {
+                // Take common stats from any process
+                $anyStats = reset($stats);
+                $combinedStats = [
+                    'time' => $anyStats['time'],
+                    'elapsed' => $anyStats['elapsed'],
+                    'cpu' => $anyStats['cpu'],
+                    'workers' => $anyStats['workers'],
+                    'chunks' => $anyStats['chunks'],
+                    'is_optimizing' => $anyStats['is_optimizing'],
+                    'growth_rate' => $anyStats['growth_rate'],
+                    'size' => $anyStats['size']
+                ];
+                
+                // Combine process-specific stats
+                $values = [
+                    self::colorize(str_pad($combinedStats['time'], $widths['time']), self::COLOR_BLUE),
+                    self::colorize(str_pad(self::formatElapsedTime($combinedStats['elapsed']), $widths['elapsed']), self::COLOR_BLUE),
+                ];
+                        
+                // Add Progress values
+                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['progress'] : '-', 10);
+
+                // Add QPS values
+                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['qps'] : '-', 7);
+
+                // Add DPS values
+                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['dps'] : '-', 7);
+
+                // Add common values
+                $values = array_merge($values, [
+                    self::colorize(str_pad($combinedStats['cpu'], $widths['cpu']), self::COLOR_YELLOW),
+                    self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
+                    self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
+                    self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
+                    self::colorize(str_pad($combinedStats['growth_rate'], $widths['growth']), self::COLOR_YELLOW),
+                    self::colorize(str_pad($combinedStats['size'], $widths['size']), self::COLOR_YELLOW)
+                ]);
+        
+
+                // Format and print the line
+                printf(self::$PROGRESS_FORMAT, ...$values);
+                $linesPrinted++;
+
+                // Reprint header if needed
+                if ($linesPrinted >= $linesBeforeHeader) {
+                    echo "\n";
+                    $printHeader();
+                    $linesPrinted = 0;
+                }
+            }
+            
+            sleep(1);
+        }
+    }
+}

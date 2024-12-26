@@ -1,0 +1,262 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches:
+      - main
+
+env:
+  APP_NAME: 'manticore-load'
+  MAINTAINER: 'Manticore'
+  DESC: 'Manticore Load Emulator'
+jobs:
+  vars:
+    runs-on: ubuntu-22.04
+    outputs:
+      app_version: ${{ steps.vars.outputs.app_version }}
+      app_date: ${{ steps.vars.outputs.app_date }}
+      app_commit: ${{ steps.vars.outputs.app_commit }}
+      rpm_suffix: ${{ steps.vars.outputs.rpm_suffix }}
+      deb_suffix: ${{ steps.vars.outputs.deb_suffix }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        run: |
+          version=$(<APP_VERSION)
+          date=$( date +%y%m%d%H )
+          commit=${GITHUB_SHA:0:7}
+
+          echo "app_version=$version" >> $GITHUB_OUTPUT
+          echo "app_date=$date" >> $GITHUB_OUTPUT
+          echo "app_commit=$commit" >> $GITHUB_OUTPUT
+          echo "rpm_suffix=_${date}.$commit" >> $GITHUB_OUTPUT
+          echo "deb_suffix=-${date}-$commit" >> $GITHUB_OUTPUT
+
+  build-artifact:
+    runs-on: ubuntu-22.04
+    needs:
+      - vars
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create artifact
+        run: |
+          name="${{ env.APP_NAME }}_${{ needs.vars.outputs.app_version }}${{ needs.vars.outputs.deb_suffix }}"
+          echo "$name"
+          mkdir -p build/${{ env.APP_NAME }}
+          cp ${{ env.APP_NAME }} build/${{ env.APP_NAME }}/${{ env.APP_NAME }}
+          cp -r src build/${{ env.APP_NAME }}/
+          cd build
+          tar -czf "$name.tar.gz" ${{ env.APP_NAME }}
+          zip -r "$name.zip" ${{ env.APP_NAME }}  
+          find .
+        shell: bash
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact
+          path: ./build/*.{tar.gz,zip}
+
+  build-linux-packages:
+    runs-on: ubuntu-22.04
+    needs:
+      - vars
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare packages structure
+        run: |
+          mkdir -p .debpkg/usr/bin
+          mkdir -p .debpkg/usr/share/manticore/modules/${{ env.APP_NAME }}
+          mkdir -p .rpmpkg/usr/bin
+          mkdir -p .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}
+          cp -rp src/* .debpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/
+          cp -rp src/* .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/
+          cp -r ${{ env.APP_NAME }} .debpkg/usr/bin/${{ env.APP_NAME }}
+          cp -r ${{ env.APP_NAME }} .rpmpkg/usr/bin/${{ env.APP_NAME }}
+          cp -p LICENSE .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/LICENSE
+          cp -p APP_VERSION .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/APP_VERSION
+          cp -p README.md .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/README.md
+          sudo chown -R root:root .debpkg
+          sudo chown -R root:root .rpmpkg
+          find .debpkg
+          find .rpmpkg
+        shell: bash
+      - uses: manticoresoftware/actions-build-deb-action@master
+        with:
+          package: ${{ env.APP_NAME }}
+          package_root: .debpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ needs.vars.outputs.app_version }}${{ needs.vars.outputs.deb_suffix }}
+          arch: 'all'
+          desc: '${{ env.DESC }}'
+
+      - name: Build RPM packages
+        run: |
+          sudo apt-get update -y -q
+          sudo apt-get install -y rpm
+
+          RPMBUILD_DIR="$HOME/rpmbuild"
+          RPMBUILD_SOURCE_DIR="$RPMBUILD_DIR/SOURCES"
+          RPMBUILD_SPEC_DIR="$RPMBUILD_DIR/SPECS"
+
+          WORKDIR="/tmp/work"
+          mkdir "$WORKDIR"
+          spec_file=main.spec
+          cp "packages/$spec_file" "$WORKDIR"
+          cp -rp ".rpmpkg" "$WORKDIR/${{ env.APP_NAME }}"
+          cd "$WORKDIR"
+
+          # Prepare spec file for RPM
+          sed -i 's/{{ NAME }}/${{ env.APP_NAME }}/g' $spec_file
+          sed -i 's/{{ VERSION }}/${{ needs.vars.outputs.app_version }}${{ needs.vars.outputs.rpm_suffix }}/g' $spec_file
+          sed -i 's/{{ MAINTAINER }}/${{ env.MAINTAINER }}/g' $spec_file
+          sed -i 's/{{ DESC }}/${{ env.DESC }}/g' $spec_file
+
+          tar czf tmp.tar.gz "${{ env.APP_NAME }}/"
+          mkdir -p "$RPMBUILD_SOURCE_DIR"
+          mkdir -p "$RPMBUILD_SPEC_DIR"
+          mv tmp.tar.gz "$RPMBUILD_SOURCE_DIR"
+          cp -p $spec_file "$RPMBUILD_SPEC_DIR"
+          rpmbuild -bb "$RPMBUILD_SPEC_DIR/$spec_file"
+          ls -lah "$RPMBUILD_DIR/RPMS/noarch"/*.rpm
+          cp -p "$RPMBUILD_DIR/RPMS/noarch"/*.rpm $GITHUB_WORKSPACE
+
+      - name: Rename packages to proper name
+        run: |
+          ls -la ./*.rpm
+          version=${{ needs.vars.outputs.app_version }}${{ needs.vars.outputs.rpm_suffix }}
+          rpm_path="./${{ env.APP_NAME }}-${version}-1.noarch.rpm"
+          cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el7.noarch.rpm"
+          cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el8.noarch.rpm"
+          mv $rpm_path "./${{ env.APP_NAME }}-${version}-1.el9.noarch.rpm"
+
+          ls -la ./*.deb
+
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact-deb
+          path: ./*.deb
+
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact-el7-rpm
+          path: ./*.el7.noarch.rpm
+
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact-el8-rpm
+          path: ./*.el8.noarch.rpm
+
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact-el9-rpm
+          path: ./*.el9.noarch.rpm
+
+  create-release:
+    runs-on: ubuntu-22.04
+    needs:
+      - build-artifact
+      - build-linux-packages
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate changelog
+        run: |
+          bin/git-changelog > ./changelog
+
+      - name: Create Release
+        id: create-release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body_path: ./changelog
+          draft: true
+          prerelease: false
+
+  deploy:
+    needs:
+      - build-artifact
+      - build-linux-packages
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: buster
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: bionic
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: focal
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: jammy
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: bullseye
+          - artifact: artifact-deb
+            type: deb
+            arch: all
+            delimiter: "-"
+            distro: bookworm
+          - artifact: artifact-el7-rpm
+            type: rpm
+            arch: noarch
+            delimiter: "_"
+            distro: 7
+          - artifact: artifact-el8-rpm
+            type: rpm
+            arch: noarch
+            delimiter: "_"
+            distro: 8
+          - artifact: artifact-el9-rpm
+            type: rpm
+            arch: noarch
+            delimiter: "_"
+            distro: 9
+          - artifact: artifact
+            type: arc
+            arch: noarch
+            delimiter: "-"
+            distro: ""
+    steps:
+      - name: Deploy package
+        uses: manticoresoftware/publish_to_repo@main
+        with:
+          ssh_key: ${{ secrets.REPO_SSH_KEY }}
+          distr: ${{ matrix.distro }}
+          arch: ${{ matrix.arch }}
+          artifact: ${{ matrix.artifact }}
+          type: ${{ matrix.type }}
+          delimiter: ${{ matrix.delimiter }}
+
+  update-manticoresearch-deps:
+    needs:
+      - vars
+      - deploy
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Update deps
+        uses: manticoresoftware/manticoresearch/actions/update-deps@master
+        with:
+          name: load
+          version: "${{ needs.vars.outputs.app_version }} ${{ needs.vars.outputs.app_date }} ${{ needs.vars.outputs.app_commit }}"
+          token: ${{ secrets.PR_TOKEN }}

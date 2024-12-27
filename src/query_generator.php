@@ -68,52 +68,71 @@ class QueryGenerator {
         
         // Initialize word list only once
         if (self::$words === null) {
-            self::$words = array(
-                'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
-                'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
-                'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
-                'would', 'could', 'should', 'will', 'may', 'might', 'must', 'shall', 'can', 'had',
-                'has', 'was', 'were', 'been', 'being', 'am', 'is', 'are', 'does', 'did',
-                'go', 'went', 'gone', 'see', 'saw', 'seen', 'take', 'took', 'taken', 'make',
-                'made', 'find', 'found', 'get', 'got', 'give', 'gave', 'think', 'thought', 'know',
-                'knew', 'come', 'came', 'tell', 'told', 'work', 'worked', 'call', 'called', 'try',
-                'tried', 'ask', 'asked', 'need', 'needed', 'feel', 'felt', 'become', 'became', 'leave',
-                'left', 'put', 'run', 'ran', 'bring', 'brought', 'begin', 'began', 'keep', 'kept',
-                'hold', 'held', 'write', 'wrote', 'stand', 'stood', 'hear', 'heard', 'let', 'set',
-                'meet', 'met', 'pay', 'paid', 'sit', 'sat', 'speak', 'spoke', 'lie', 'lay',
-                'lead', 'led', 'read', 'grow', 'grew', 'lose', 'lost', 'fall', 'fell', 'send',
-                'sent', 'build', 'built', 'understand', 'understood', 'draw', 'drew', 'break', 'broke', 'spend',
-                'spent', 'cut', 'hurt', 'sell', 'sold', 'rise', 'rose', 'drive', 'drove', 'buy',
-                'beautiful', 'happy', 'sad', 'angry', 'excited', 'tired', 'hungry', 'thirsty', 'cold', 'hot',
-                'big', 'small', 'tall', 'short', 'fat', 'thin', 'old', 'young', 'rich', 'poor',
-                'fast', 'slow', 'early', 'late', 'hard', 'soft', 'loud', 'quiet', 'clean', 'dirty',
-                'dark', 'light', 'heavy', 'light', 'strong', 'weak', 'wet', 'dry', 'good', 'bad',
-                'high', 'low', 'long', 'short', 'wide', 'narrow', 'deep', 'shallow', 'thick', 'thin',
-                'smooth', 'rough', 'sharp', 'dull', 'sweet', 'sour', 'bitter', 'salty', 'fresh', 'stale',
-                'new', 'old', 'modern', 'ancient', 'wild', 'tame', 'brave', 'afraid', 'proud', 'humble',
-                'wise', 'foolish', 'clever', 'stupid', 'kind', 'cruel', 'gentle', 'rough', 'calm', 'angry',
-                'busy', 'lazy', 'careful', 'careless', 'serious', 'funny', 'happy', 'sad', 'rich', 'poor',
-                'healthy', 'sick', 'alive', 'dead', 'right', 'wrong', 'true', 'false', 'real', 'fake',
-                'open', 'closed', 'empty', 'full', 'heavy', 'light', 'hard', 'soft', 'hot', 'cold',
-                'summer', 'winter', 'spring', 'autumn', 'morning', 'evening', 'night', 'day', 'dawn', 'dusk',
-                'north', 'south', 'east', 'west', 'up', 'down', 'left', 'right', 'front', 'back',
-                'inside', 'outside', 'above', 'below', 'near', 'far', 'here', 'there', 'everywhere', 'nowhere',
-                'always', 'never', 'sometimes', 'often', 'rarely', 'usually', 'now', 'then', 'soon', 'later',
-                'today', 'tomorrow', 'yesterday', 'weekly', 'monthly', 'yearly', 'daily', 'nightly', 'hourly', 'instantly',
-                'quickly', 'slowly', 'suddenly', 'gradually', 'carefully', 'carelessly', 'quietly', 'loudly', 'softly', 'harshly',
-                'easily', 'hardly', 'simply', 'complexly', 'naturally', 'artificially', 'personally', 'professionally', 'publicly', 'privately',
-                'legally', 'illegally', 'formally', 'informally', 'physically', 'mentally', 'emotionally', 'spiritually', 'socially', 'individually',
-                'politically', 'economically', 'culturally', 'historically', 'scientifically', 'artistically', 'musically', 'technically', 'medically', 'educationally',
-                'locally', 'globally', 'nationally', 'internationally', 'regionally', 'universally', 'specifically', 'generally', 'particularly', 'commonly',
-                'normally', 'unusually', 'regularly', 'irregularly', 'frequently', 'infrequently', 'occasionally', 'constantly', 'permanently', 'temporarily',
-                'actively', 'passively', 'positively', 'negatively', 'directly', 'indirectly', 'correctly', 'incorrectly', 'successfully', 'unsuccessfully',
-                'fortunately', 'unfortunately', 'happily', 'unhappily', 'luckily', 'unluckily', 'surprisingly', 'expectedly', 'obviously', 'subtly',
-                'definitely', 'possibly', 'probably', 'certainly', 'maybe', 'perhaps', 'surely', 'doubtfully', 'clearly', 'vaguely',
-                '1', '2', '3', '4', '5', '10', '20', '50', '100', '1000'
-            );        
+            // If minWords is actually a file path (from parsePattern)
+            if (is_string($minWords) && file_exists($minWords)) {
+                $content = file_get_contents($minWords);
+                if ($content === false) {
+                    throw new Exception("Cannot read file: $minWords");
+                }
+                // Split content by spaces and punctuation
+                self::$words = preg_split('/[\s\.,;:!?\(\)\[\]{}"\'\-]+/', $content, -1, PREG_SPLIT_NO_EMPTY);
+                if (empty(self::$words)) {
+                    throw new Exception("No words found in file: $minWords");
+                }
+            } else {
+                self::$words = array(
+                    'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
+                    'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
+                    'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
+                    'would', 'could', 'should', 'will', 'may', 'might', 'must', 'shall', 'can', 'had',
+                    'has', 'was', 'were', 'been', 'being', 'am', 'is', 'are', 'does', 'did',
+                    'go', 'went', 'gone', 'see', 'saw', 'seen', 'take', 'took', 'taken', 'make',
+                    'made', 'find', 'found', 'get', 'got', 'give', 'gave', 'think', 'thought', 'know',
+                    'knew', 'come', 'came', 'tell', 'told', 'work', 'worked', 'call', 'called', 'try',
+                    'tried', 'ask', 'asked', 'need', 'needed', 'feel', 'felt', 'become', 'became', 'leave',
+                    'left', 'put', 'run', 'ran', 'bring', 'brought', 'begin', 'began', 'keep', 'kept',
+                    'hold', 'held', 'write', 'wrote', 'stand', 'stood', 'hear', 'heard', 'let', 'set',
+                    'meet', 'met', 'pay', 'paid', 'sit', 'sat', 'speak', 'spoke', 'lie', 'lay',
+                    'lead', 'led', 'read', 'grow', 'grew', 'lose', 'lost', 'fall', 'fell', 'send',
+                    'sent', 'build', 'built', 'understand', 'understood', 'draw', 'drew', 'break', 'broke', 'spend',
+                    'spent', 'cut', 'hurt', 'sell', 'sold', 'rise', 'rose', 'drive', 'drove', 'buy',
+                    'beautiful', 'happy', 'sad', 'angry', 'excited', 'tired', 'hungry', 'thirsty', 'cold', 'hot',
+                    'big', 'small', 'tall', 'short', 'fat', 'thin', 'old', 'young', 'rich', 'poor',
+                    'fast', 'slow', 'early', 'late', 'hard', 'soft', 'loud', 'quiet', 'clean', 'dirty',
+                    'dark', 'light', 'heavy', 'light', 'strong', 'weak', 'wet', 'dry', 'good', 'bad',
+                    'high', 'low', 'long', 'short', 'wide', 'narrow', 'deep', 'shallow', 'thick', 'thin',
+                    'smooth', 'rough', 'sharp', 'dull', 'sweet', 'sour', 'bitter', 'salty', 'fresh', 'stale',
+                    'new', 'old', 'modern', 'ancient', 'wild', 'tame', 'brave', 'afraid', 'proud', 'humble',
+                    'wise', 'foolish', 'clever', 'stupid', 'kind', 'cruel', 'gentle', 'rough', 'calm', 'angry',
+                    'busy', 'lazy', 'careful', 'careless', 'serious', 'funny', 'happy', 'sad', 'rich', 'poor',
+                    'healthy', 'sick', 'alive', 'dead', 'right', 'wrong', 'true', 'false', 'real', 'fake',
+                    'open', 'closed', 'empty', 'full', 'heavy', 'light', 'hard', 'soft', 'hot', 'cold',
+                    'summer', 'winter', 'spring', 'autumn', 'morning', 'evening', 'night', 'day', 'dawn', 'dusk',
+                    'north', 'south', 'east', 'west', 'up', 'down', 'left', 'right', 'front', 'back',
+                    'inside', 'outside', 'above', 'below', 'near', 'far', 'here', 'there', 'everywhere', 'nowhere',
+                    'always', 'never', 'sometimes', 'often', 'rarely', 'usually', 'now', 'then', 'soon', 'later',
+                    'today', 'tomorrow', 'yesterday', 'weekly', 'monthly', 'yearly', 'daily', 'nightly', 'hourly', 'instantly',
+                    'quickly', 'slowly', 'suddenly', 'gradually', 'carefully', 'carelessly', 'quietly', 'loudly', 'softly', 'harshly',
+                    'easily', 'hardly', 'simply', 'complexly', 'naturally', 'artificially', 'personally', 'professionally', 'publicly', 'privately',
+                    'legally', 'illegally', 'formally', 'informally', 'physically', 'mentally', 'emotionally', 'spiritually', 'socially', 'individually',
+                    'politically', 'economically', 'culturally', 'historically', 'scientifically', 'artistically', 'musically', 'technically', 'medically', 'educationally',
+                    'locally', 'globally', 'nationally', 'internationally', 'regionally', 'universally', 'specifically', 'generally', 'particularly', 'commonly',
+                    'normally', 'unusually', 'regularly', 'irregularly', 'frequently', 'infrequently', 'occasionally', 'constantly', 'permanently', 'temporarily',
+                    'actively', 'passively', 'positively', 'negatively', 'directly', 'indirectly', 'correctly', 'incorrectly', 'successfully', 'unsuccessfully',
+                    'fortunately', 'unfortunately', 'happily', 'unhappily', 'luckily', 'unluckily', 'surprisingly', 'expectedly', 'obviously', 'subtly',
+                    'definitely', 'possibly', 'probably', 'certainly', 'maybe', 'perhaps', 'surely', 'doubtfully', 'clearly', 'vaguely',
+                    '1', '2', '3', '4', '5', '10', '20', '50', '100', '1000'
+                );
+            }
         }
         
-        $numWords = rand($minWords, $maxWords);
+        // If minWords is a file path, use random length between 20-300 words
+        if (is_string($minWords) && file_exists($minWords)) {
+            $numWords = rand(20, 300);
+        } else {
+            $numWords = rand($minWords, $maxWords);
+        }
+        
         $text = array();
         if (self::$words_count === null) {
             self::$words_count = count(self::$words);
@@ -151,6 +170,20 @@ class QueryGenerator {
      * @throws Exception If pattern format is invalid
      */
     public static function parsePattern($pattern) {
+        // Special handling for text patterns with file paths
+        if (preg_match('/^text\/{([^}]+)}\/([\d]+)\/([\d]+)$/', $pattern, $matches)) {
+            $file_path = $matches[1];
+            if (!file_exists($file_path)) {
+                throw new Exception("File not found: $file_path");
+            }
+            return [
+                'type' => 'text',
+                'file_path' => $file_path,
+                'min_words' => (int)$matches[2],
+                'max_words' => (int)$matches[3]
+            ];
+        }
+
         $parts = explode('/', $pattern);
         $type = $parts[0];
         
@@ -181,7 +214,7 @@ class QueryGenerator {
                 
             case 'text':
                 if (count($parts) !== 3) {
-                    throw new Exception("Text pattern requires format: text/min_words/max_words");
+                    throw new Exception("Text pattern requires format: text/min_words/max_words or text/{path/to/file}/min_words/max_words");
                 }
                 return [
                     'type' => 'text',

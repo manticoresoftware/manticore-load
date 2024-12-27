@@ -150,15 +150,13 @@ batch         Time          Total Docs    Docs/Sec     Avg QPS      p99 QPS     
 
 ### Advanced Patterns
 
-| Pattern              | Description                                      |
-|-----------------------|--------------------------------------------------|
-| `<increment/N>`      | Auto-incrementing value starting from N (default: 1) |
-| `<string/N/M>`       | Random string with length between N and M         |
-| `<text/N/M>`         | Random text with N to M words                    |
-| `<int/N/M>`          | Random integer between N and M                   |
-| `<float/N/M>`        | Random float between N and M                     |
-| `<boolean>`          | Random true or false value                       |
-| `<array/N/M/X/Y>`    | Random array with N to M elements, values X to Y  |
+| Pattern                    | Description                                      |
+|---------------------------|--------------------------------------------------|
+| `<increment/N>`           | Auto-incrementing value starting from N (default: 1) |
+| `<string/N/M>`            | Random string with length between N and M         |
+| `<text/N/M>`              | Random text with N to M words                    |
+| `<text/{path}/MIN/MAX>`   | Random text using words from file, MIN to MAX words |
+| `<int/N/M>`               | Random integer between N and M                   |
 
 ---
 

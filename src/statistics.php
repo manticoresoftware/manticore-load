@@ -15,6 +15,7 @@ class Statistics {
     // Stores performance metrics and statistics
     private $start_time;
     private $total_batches;
+    private $threads;
     private $batch_size;
     private $completed_operations = 0;
     private $completed_queries = 0;
@@ -25,15 +26,18 @@ class Statistics {
     private $use_histograms;          // Controls which latency tracking method to use
     private $config;                  // Configuration object
     private $process_index;           // Process index
+    private static $header_shown = false; // Static flag to track if header has been shown
 
     /**
      * Initializes statistics tracking with specified batch size and query type
+     * @param int $threads Number of threads
      * @param int $batch_size Size of operation batches
      * @param bool $is_insert_query Whether tracking inserts (true) or reads (false)
      * @param Configuration $config Configuration object
      */
-    public function __construct($batch_size, $is_insert_query, $config, $process_index) {
+    public function __construct($threads, $batch_size, $is_insert_query, $config, $process_index) {
         $this->start_time = microtime(true);
+        $this->threads = $threads;
         $this->batch_size = $batch_size;
         $this->is_insert_query = $is_insert_query;
         $this->use_histograms = $config->get('latency-histograms');
@@ -164,6 +168,10 @@ class Statistics {
             }
         }
         
+        // Get threads and batch size
+        $threads = $this->threads;
+        $batch_size = $this->batch_size;
+        
         if ($this->is_insert_query) {
             $format = "\n";
             $values = [];
@@ -174,12 +182,20 @@ class Statistics {
                 $values[] = $column_name;
             }
             
+            // Add Threads and Batch columns
+            $format .= "%-8s; %-10s; ";
+            $values[] = "Threads";
+            $values[] = "Batch";
+            
             $format .= "%-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s;\n";
             $values = array_merge($values, [
                 "Time", "Total Docs", "Docs/Sec", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
                 "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
             ]);
-            vprintf($format, $values);
+            if (!self::$header_shown) {
+                vprintf($format, $values);
+                self::$header_shown = true;
+            }
 
             $format = "";
             $values = [];
@@ -189,6 +205,11 @@ class Statistics {
                 $format .= "%-12s; ";
                 $values[] = $column_value;
             }
+            
+            // Add Threads and Batch values
+            $format .= "%-8d; %-10d; ";
+            $values[] = $threads;
+            $values[] = $batch_size;
             
             $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
             $values = array_merge($values, [
@@ -212,12 +233,20 @@ class Statistics {
                 $values[] = $column_name;
             }
             
+            // Add Threads and Batch columns
+            $format .= "%-8s; %-10s; ";
+            $values[] = "Threads";
+            $values[] = "Batch";
+            
             $format .= "%-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s;\n";
             $values = array_merge($values, [
                 "Time", "Total Ops", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
                 "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
             ]);
-            vprintf($format, $values);
+            if (!self::$header_shown) {
+                vprintf($format, $values);
+                self::$header_shown = true;
+            }
 
             $format = "";
             $values = [];
@@ -226,6 +255,11 @@ class Statistics {
                 $format .= "%-12s; ";
                 $values[] = $column_value;
             }
+            
+            // Add Threads and Batch values
+            $format .= "%-8d; %-10d; ";
+            $values[] = $threads;
+            $values[] = $batch_size;
             
             $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
             $values = array_merge($values, [
@@ -257,6 +291,8 @@ class Statistics {
         
         printf("Total time:       %s\n", ProgressDisplay::formatElapsedTime($total_time));
         printf("Total queries:    %d\n", $this->completed_queries);
+        printf("Threads:          %d\n", $this->threads);
+        printf("Batch size:       %d\n", $this->batch_size);
         
         if ($this->is_insert_query) {
             printf("Total docs:       %d\n", $this->completed_operations);

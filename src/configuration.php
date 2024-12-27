@@ -204,9 +204,29 @@ class Configuration implements ArrayAccess {
                 $process['drop-table'] = true;
             }
             
-            foreach (['port', 'batch-size', 'threads', 'total', 'iterations'] as $key) {
+            foreach (['port', 'total', 'iterations'] as $key) {
                 if (isset($process[$key])) {
                     $process[$key] = (int)$process[$key];
+                }
+            }
+
+            // Special handling for threads parameter to allow comma-separated values
+            if (isset($process['threads'])) {
+                if (strpos($process['threads'], ',') !== false) {
+                    $thread_values = array_map('intval', explode(',', $process['threads']));
+                    $process['threads'] = $thread_values;
+                } else {
+                    $process['threads'] = [(int)$process['threads']];
+                }
+            }
+
+            // Special handling for batch-size parameter to allow comma-separated values
+            if (isset($process['batch-size'])) {
+                if (strpos($process['batch-size'], ',') !== false) {
+                    $batch_values = array_map('intval', explode(',', $process['batch-size']));
+                    $process['batch-size'] = $batch_values;
+                } else {
+                    $process['batch-size'] = [(int)$process['batch-size']];
                 }
             }
         }
@@ -233,11 +253,29 @@ class Configuration implements ArrayAccess {
                 }
             }
 
-            $numeric = ['threads', 'total', 'iterations', 'batch-size'];
+            $numeric = ['total', 'iterations'];
             foreach ($numeric as $param) {
                 if (isset($process[$param]) && $process[$param] <= 0) {
                     $arg_name = str_replace('_', '-', $param);
                     die("ERROR: Parameter --$arg_name must be a positive number for process " . $index . "\n");
+                }
+            }
+
+            // Validate threads array
+            if (isset($process['threads'])) {
+                foreach ($process['threads'] as $thread_count) {
+                    if ($thread_count <= 0) {
+                        die("ERROR: Thread count must be a positive number for process " . $index . "\n");
+                    }
+                }
+            }
+
+            // Validate batch-size array
+            if (isset($process['batch-size'])) {
+                foreach ($process['batch-size'] as $batch_size) {
+                    if ($batch_size <= 0) {
+                        die("ERROR: Batch size must be a positive number for process " . $index . "\n");
+                    }
                 }
             }
         }
@@ -257,7 +295,7 @@ class Configuration implements ArrayAccess {
      * @param string|null $command SQL command to check
      * @return bool True if command is INSERT/REPLACE, false otherwise
      */
-    private function isInsertQuery($command = null) {
+    public static function isInsertQuery($command = null) {
         if ($command === null) {
             return false;
         }
@@ -278,13 +316,14 @@ class Configuration implements ArrayAccess {
         die(
             "Usage: ./manticore-load [options] [--together [options]...]\n\n" .
             "Required options:\n" .
-            "  --threads=N                  Number of concurrent threads\n" .
+            "  --threads=N                  Number of concurrent threads (single value or comma-separated list)\n" .
             "  --total=N                    For INSERT/REPLACE: total documents to generate\n" .
             "                               For SELECT/other: total queries to execute\n" .
             "  --load=SQL                   SQL command template for the main load\n" .
             
             "\nOptional options:\n" .
-            "  --batch-size=N               Number of documents per batch (required for INSERT/REPLACE)\n" .
+            "  --batch-size=N               Number of documents per batch (single value or comma-separated list)\n" .
+            "                               Required for INSERT/REPLACE operations\n" .
             "  --iterations=N               Number of times to repeat the data generation (default: 1)\n" .
             "  --host=HOST                  Manticore host (default: 127.0.0.1)\n" .
             "  --port=PORT                  Manticore port (default: 9306)\n" .

@@ -187,7 +187,23 @@ foreach ($processes as $process_index => $process_config) {
     } else {
         // Child process
         try {
-            run_process($process_config, $config, $process_index, $num_processes);
+            // Iterate through all combinations of threads and batch sizes
+            foreach ($process_config['threads'] as $threads) {
+                foreach ($process_config['batch-size'] as $batch_size) {
+                    $process_config_copy = $process_config;
+                    $process_config_copy['threads'] = $threads;
+                    $process_config_copy['batch-size'] = $batch_size;
+                    
+                    if (!$config->get('quiet')) {
+                        $is_insert = Configuration::isInsertQuery($process_config['load_command']);
+                        $batch_size_info = $is_insert ? ", batch-size=$batch_size" : "";
+                        echo "======================================================================================\n";
+                        echo "Process $process_index: Running with threads=$threads$batch_size_info\n";
+                    }
+                    
+                    run_process($process_config_copy, $config, $process_index, $num_processes);
+                }
+            }
             exit(0);
         } catch (Exception $e) {
             echo "Process $process_index failed: " . $e->getMessage() . "\n";
@@ -317,6 +333,48 @@ function run_process($process_config, $config, $process_index, $num_processes) {
                     ConsoleOutput::writeLine("Process $process_index: Dropping table: $drop_query");
                 }
                 mysqli_query($all_links[0], $drop_query);
+                if (mysqli_warning_count($all_links[0])) {
+                    $result = mysqli_query($all_links[0], "SHOW WARNINGS");
+                    while ($row = mysqli_fetch_assoc($result)) {
+                        if (!$config->get('quiet')) echo "Process $process_index WARNING: " . $row['Message'] . "\n";
+                        
+                        // Check if warning is about non-empty directory after table drop
+                        if (preg_match('/directory \'.*\' is not empty after table drop/', $row['Message'])) {
+                            // Get data directory from settings
+                            $settings_result = mysqli_query($all_links[0], "SHOW SETTINGS");
+                            $data_dir = null;
+                            while ($settings_row = mysqli_fetch_assoc($settings_result)) {
+                                if ($settings_row['Setting_name'] === 'searchd.data_dir') {
+                                    $data_dir = $settings_row['Value'];
+                                    break;
+                                }
+                            }
+                            
+                            if ($data_dir && isset($table_name)) {
+                                $table_dir = $data_dir . '/' . $table_name;
+                                if (is_dir($table_dir)) {
+                                    // Recursively remove directory contents first
+                                    $files = new RecursiveIteratorIterator(
+                                        new RecursiveDirectoryIterator($table_dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                                        RecursiveIteratorIterator::CHILD_FIRST
+                                    );
+                                    foreach ($files as $file) {
+                                        if ($file->isDir()) {
+                                            @rmdir($file->getRealPath());
+                                        } else {
+                                            @unlink($file->getRealPath());
+                                        }
+                                    }
+                                    if (@rmdir($table_dir)) {
+                                        if (!$config->get('quiet')) echo "Process $process_index WARNING: Removed orphaned table directory: $table_dir\n";
+                                    } else {
+                                        if (!$config->get('quiet')) echo "Process $process_index WARNING: Failed to remove orphaned table directory: $table_dir\n";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } catch (mysqli_sql_exception $e) {
                 echo "Process $process_index failed: Error dropping table: " . $e->getMessage() . "\n";
                 exit(1); // Exit with error code to trigger parent process handling
@@ -386,6 +444,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
 
     // Create statistics instance for this process
     $statistics = new Statistics(
+        $process_config['threads'],
         $process_config['batch-size'],
         strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
         strpos(strtolower($process_config['load_command']), 'replace') === 0,
@@ -442,7 +501,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     // Process each query batch
     foreach ($batches as $query) {
         if (!process($query, $all_links, $requests, $statistics)) {
-            throw new Exception("Process $process_index: ERROR processing query");
+            throw new Exception("ERROR processing query");
         }
         
         // Update statistics and show progress
@@ -535,4 +594,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         echo "Load command: " . $process_config['load_command'] . "\n";
     }
     $statistics->printReport($config->get('quiet'));
+
+    // Clean up progress display temp file
+    $progress->cleanup();
 }

@@ -95,6 +95,9 @@ class ProgressDisplay {
         $randomStr = bin2hex(random_bytes(4));
         $this->tempFilePath = "/tmp/manticore_load_progress_{$pid}_{$randomStr}";
         
+        if (file_exists($this->tempFilePath)) {
+            unlink($this->tempFilePath);
+        }
         $this->tempFile = @fopen($this->tempFilePath, 'w');
         if ($this->tempFile === false) {
             throw new RuntimeException("Failed to create temporary progress file: {$this->tempFilePath}");
@@ -104,11 +107,11 @@ class ProgressDisplay {
     }
 
     public function cleanup(): void {
-        if ($this->tempFile) {
-            fclose($this->tempFile);
+        if ($this->tempFile && is_resource($this->tempFile)) {
+            @fclose($this->tempFile);
         }
         if (file_exists($this->tempFilePath)) {
-            unlink($this->tempFilePath);
+            @unlink($this->tempFilePath);
         }
     }
 
@@ -429,10 +432,7 @@ class ProgressDisplay {
             echo str_repeat("-", $header_length - 1) . "\n";
         };
 
-        // Print initial header
-        if (!$config->get('quiet')) {
-            $printHeader();
-        }
+        $headerPrinted = false;  // Add flag to track if header has been printed
 
         while (true) {
             $stats = [];
@@ -474,6 +474,12 @@ class ProgressDisplay {
             }
             
             if (!empty($stats)) {
+                // Print header if this is the first data we're showing
+                if (!$headerPrinted && !$config->get('quiet')) {
+                    $printHeader();
+                    $headerPrinted = true;
+                }
+
                 // Take common stats from any process
                 $anyStats = reset($stats);
                 $combinedStats = [

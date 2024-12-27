@@ -435,19 +435,19 @@ class QueryGenerator {
                 
                 if (count($batch) == $batch_size) {
                     $full_query = $base_query . implode(",", $batch);
-                    fwrite($cache_file, $full_query . "\n");
+                    fwrite($cache_file, $full_query . ";\n");
                     $queries[] = $full_query;
                     $batch = [];
                 }
             } else {
-                fwrite($cache_file, $query . "\n");
+                fwrite($cache_file, $query . ";\n");
                 $queries[] = $query;
             }
             
             $c++;
             if ($c % 1000 == 0 && !$quiet) {
                 $progress = sprintf("\r%-80s\r", "");
-                $progress .= sprintf("Process {$this->process_index}: Generating new data cache... %d%%", 
+                $progress .= sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... %d%%", 
                     round($c * 100 / $this->config->get('total'))
                 );
                 ConsoleOutput::write($progress);
@@ -463,7 +463,7 @@ class QueryGenerator {
         fclose($cache_file);
         if (!$quiet) {
             ConsoleOutput::write(sprintf("\r%-80s\r", ""));
-            ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache... 100%%"));
+            ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
         }
         
         return $queries;
@@ -479,6 +479,7 @@ class QueryGenerator {
             $value = $this->generateValue($pattern);
             $query = str_replace("<$pattern_text>", $value, $query);
         }
+        rtrim($query, ';');
         return $query;
     }
     

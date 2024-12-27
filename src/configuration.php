@@ -312,7 +312,8 @@ class Configuration implements ArrayAccess {
             "  <int/1/100>                  Random integer between 1 and 100\n" .
             "  <float/1/1000>               Random float between 1 and 1000\n" .
             "  <boolean>                    Random true or false\n" .
-            "  <array/2/10/100/1000>        Array of 2-10 elements, values 100-1000\n\n" .
+            "  <array/2/10/100/1000>        Array of 2-10 elements, values 100-1000\n" .
+            "  <array_float/256/512/0/1>    Array of 256-512 random floats, values between 0 and 1\n\n" .
             
             "Examples:\n\n" .
             "# Load 1M documents in batches of 1000:\n" .

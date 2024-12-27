@@ -170,11 +170,11 @@ class Statistics {
             
             // Add custom column if specified
             if ($column_name) {
-                $format .= "%-12s  ";
+                $format .= "%-12s; ";
                 $values[] = $column_name;
             }
             
-            $format .= "%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n";
+            $format .= "%-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s;\n";
             $values = array_merge($values, [
                 "Time", "Total Docs", "Docs/Sec", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
                 "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
@@ -186,11 +186,11 @@ class Statistics {
             
             // Add custom column value if specified
             if ($column_value) {
-                $format .= "%-12s  ";
+                $format .= "%-12s; ";
                 $values[] = $column_value;
             }
             
-            $format .= "%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n";
+            $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
             $values = array_merge($values, [
                 sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
                 $this->completed_operations,
@@ -208,11 +208,11 @@ class Statistics {
             $values = [];
             
             if ($column_name) {
-                $format .= "%-12s  ";
+                $format .= "%-12s; ";
                 $values[] = $column_name;
             }
             
-            $format .= "%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n";
+            $format .= "%-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s; %-12s;\n";
             $values = array_merge($values, [
                 "Time", "Total Ops", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
                 "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
@@ -223,13 +223,13 @@ class Statistics {
             $values = [];
             
             if ($column_value) {
-                $format .= "%-12s  ";
+                $format .= "%-12s; ";
                 $values[] = $column_value;
             }
             
-            $format .= "%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n";
+            $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
             $values = array_merge($values, [
-                sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
+                sprintf("%02d;%02d", (int)($total_time/60), (int)$total_time%60),
                 $this->completed_operations,
                 $qps_stats['avg'], $qps_stats['p99'], $qps_stats['p95'],
                 $qps_stats['p5'], $qps_stats['p1'],

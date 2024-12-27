@@ -229,7 +229,7 @@ class Statistics {
             
             $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
             $values = array_merge($values, [
-                sprintf("%02d;%02d", (int)($total_time/60), (int)$total_time%60),
+                sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
                 $this->completed_operations,
                 $qps_stats['avg'], $qps_stats['p99'], $qps_stats['p95'],
                 $qps_stats['p5'], $qps_stats['p1'],

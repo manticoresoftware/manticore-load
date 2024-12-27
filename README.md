@@ -19,6 +19,8 @@ Manticore Load Emulator is a powerful tool for testing and benchmarking Manticor
 - **Histogram-Based Latency Tracking:** Uses histogram-based latency tracking for memory-efficient but approximate percentiles.
 - **Precise Latency Tracking:** Uses precise latency tracking for exact percentiles.
 - **Graceful Shutdown:** Handles CTRL-C interruption gracefully, ensuring clean termination of all processes and threads.
+- **Hyperparameter Testing:** Supports testing multiple thread counts and batch sizes in a single run using comma-separated values (e.g., `--threads=1,2,4,8 --batch-size=1000,10000`).
+- **Spreadsheet-Friendly Output:** In quiet mode, produces semicolon-separated output that can be easily copied to spreadsheet applications for charting and analysis.
 
 ---
 

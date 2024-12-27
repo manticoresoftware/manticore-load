@@ -52,7 +52,9 @@ Just install `manticore-extra` dev package or release version higher than 6.3.8.
 
 Run `manticore-load` with a variety of options to simulate workloads:
 
-### Write Example
+### Basic Examples
+
+#### Write Example
 
 Insert 1,000,000 documents in batches of 1,000:
 
@@ -65,7 +67,7 @@ manticore-load \
   --load="INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)"
 ```
 
-### SELECT Example
+#### SELECT Example
 
 Run 1,000 search queries:
 
@@ -76,7 +78,9 @@ manticore-load \
   --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
 ```
 
-### Multi-Process Example
+### Advanced Examples
+
+#### Multi-Process Example
 
 Run multiple workloads simultaneously:
 
@@ -102,25 +106,69 @@ manticore-load \
   --load="SELECT * FROM t WHERE MATCH('<text/10/20>')"
 ```
 
-### Quiet Mode with Custom Column
+#### Testing Different Threads
+
+Test different thread counts in a single run:
+
+```bash
+manticore-load \
+  --threads=1,2,4,8 \
+  --total=100000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
+  --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
+```
+
+#### Comparing Batch Sizes
+
+Compare different batch sizes for inserts:
+
+```bash
+manticore-load \
+  --batch-size=100,1000,10000 \
+  --threads=4 \
+  --total=1000000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
+  --load="INSERT INTO test(id,name) VALUES(0,'<text/10/100>')"
+```
+
+#### Combined Parameters with Quiet Mode
+
+Combine different threads and batch sizes in a single run and run in --quiet mode to get only the final report in compact format:
+
+```bash
+manticore-load \
+  --threads=1,2,4,8 \
+  --batch-size=100,1000,10000 \
+  --total=1000000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
+  --load="INSERT INTO test(id,name) VALUES(0,'<text/10/100>')" \
+  --quiet
+```
+
+#### Quiet Mode with Custom Column
 
 Run load test with a custom column showing batch size:
 
 ```bash
 manticore-load \
   --quiet \
-  --column=batch/1000 \
+  --column=custom/abc \
   --batch-size=1000 \
   --threads=4 \
   --total=1000000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
   --load="INSERT INTO test(id,name) VALUES(<increment>,'<text/10/100>')"
 ```
 
 This will add a "batch" column with value "1000" at the beginning of the output table:
 
 ```
-batch         Time          Total Docs    Docs/Sec     Avg QPS      p99 QPS      p95 QPS      p5 QPS       p1 QPS       Lat Avg      Lat p50      Lat p95      Lat p99
-1000          00:05        50000         10000        95           120          110          80           75           10.5         9.8          15.2         18.4
+custom      ; Threads ; Batch     ; Time        ; Total Docs  ; Docs/Sec    ; Avg QPS     ; p99 QPS     ; p95 QPS     ; p5 QPS      ; p1 QPS      ; Lat Avg     ; Lat p50     ; Lat p95     ; Lat p99     ;
+abc         ; 4       ; 1000      ; 00:15       ; 1000000     ; 64305       ; 66          ; 171         ; 171         ; 39          ; 39          ; 76.7        ; 77.5        ; 135.0       ; 245.0       ;
 ```
 
 ---
@@ -161,46 +209,6 @@ batch         Time          Total Docs    Docs/Sec     Avg QPS      p99 QPS     
 | `<int/N/M>`               | Random integer between N and M                   |
 | `<array/size_min/size_max/val_min/val_max>` | Array of random integers, size between size_min and size_max, values between val_min and val_max |
 | `<array_float/size_min/size_max/val_min/val_max>` | Array of random floats, size between size_min and size_max, values between val_min and val_max |
-
----
-
-### Advanced Usage Examples
-
-Test different thread counts in a single run:
-
-```bash
-manticore-load \
-  --threads=1,2,4,8 \
-  --total=100000 \
-  --drop \
-  --init="CREATE TABLE test(name text)" \
-  --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
-```
-
-Compare different batch sizes for inserts:
-
-```bash
-manticore-load \
-  --batch-size=100,1000,10000 \
-  --threads=4 \
-  --total=1000000 \
-  --drop \
-  --init="CREATE TABLE test(name text)" \
-  --load="INSERT INTO test(id,name) VALUES(0,'<text/10/100>')"
-```
-
-Combine different threads and batch sizes in a single run and run in --quiet mode to get only the final report in compact format:
-
-```bash
-manticore-load \
-  --threads=1,2,4,8 \
-  --batch-size=100,1000,10000 \
-  --total=1000000 \
-  --drop \
-  --init="CREATE TABLE test(name text)" \
-  --load="INSERT INTO test(id,name) VALUES(0,'<text/10/100>')" \
-  --quiet
-```
 
 ---
 

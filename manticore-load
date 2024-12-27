@@ -490,12 +490,11 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     // Update the WAIT state monitoring
     if ($config->get('wait') && isset($table_name)) {
         while (true) {
-            $stats = $monitoring->getStats();
+            $per_process_stats = $monitoring->getStats();
             if (!$config->get('quiet')) {
-                echo "Process $process_index: ";
-                $progress->update($processed_batches, $process_config['batch-size'], $stats);
+                $progress->update($processed_batches, $process_config['batch-size'], $monitoring, $statistics);
             }
-            if (!$stats['is_optimizing']) {
+            if (!$per_process_stats['is_optimizing']) {
                 break;
             }
             sleep(1);
@@ -522,6 +521,10 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     // Print final statistics
     if (!$config->get('quiet')) {
         echo "\nProcess $process_index Final Statistics:\n";
+        if (isset($process_config['init_command'])) {
+            echo "Init command: " . $process_config['init_command'] . "\n";
+        }
+        echo "Load command: " . $process_config['load_command'] . "\n";
     }
     $statistics->printReport($config->get('quiet'));
 }

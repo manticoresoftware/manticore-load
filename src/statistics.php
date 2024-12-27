@@ -416,11 +416,11 @@ class MonitoringStats {
 
     /**
      * Calculates disk usage growth rate from collected samples
-     * @return string Formatted growth rate string (e.g., "1.2 MB/s")
+     * @return int Growth rate in bytes per second
      */
     private function calculateGrowthRate() {
         if (count($this->size_samples) < 2) {
-            return "0";
+            return 0;
         }
 
         // Sort samples by time
@@ -437,11 +437,10 @@ class MonitoringStats {
         $time_delta = $last['time'] - $prev['time'];
 
         if ($time_delta <= 0 || $bytes_delta == 0) {
-            return "0";
+            return 0;
         }
 
-        $rate = round($bytes_delta / $time_delta);
-        return ProgressDisplay::formatBytes($rate) . "/s";
+        return round($bytes_delta / $time_delta);
     }
 
     /**

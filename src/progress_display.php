@@ -174,8 +174,7 @@ class ProgressDisplay {
         $stats['workers'] = (string)$stats['thread_count'];
         $stats['chunks'] = (string)$stats['disk_chunks'];
         $stats['is_optimizing'] = $stats['is_optimizing'] ? "yes" : "";
-        $stats['growth_rate'] = $stats['growth_rate'];
-        $stats['size'] = self::formatBytes($stats['disk_bytes']);
+
         $this->last_update_time = $now;
         $this->last_processed_batches = $processed_batches;
 
@@ -204,7 +203,9 @@ class ProgressDisplay {
         
         return sprintf(self::$PROGRESS_FORMAT,
             $time, $elapsed, $progress, $qps, $dps, $cpu, $workers,
-            $chunks, $merging, $write_speed, $size
+            $chunks, $merging, 
+            self::formatBytes($write_speed),
+            self::formatBytes($size)
         );
     }
 
@@ -480,16 +481,17 @@ class ProgressDisplay {
                     'elapsed' => $anyStats['elapsed'],
                     'cpu' => $anyStats['cpu'],
                     'workers' => $anyStats['workers'],
-                    'chunks' => $anyStats['chunks'],
-                    'is_optimizing' => $anyStats['is_optimizing'],
-                    'growth_rate' => $anyStats['growth_rate'],
-                    'size' => $anyStats['size']
+                    'chunks' => array_sum(array_column($stats, 'disk_chunks')),
+                    'is_optimizing' => array_reduce($stats, function($carry, $item) {
+                        return $carry || $item['is_optimizing'];
+                    }, false),
+                    'growth_rate' => array_sum(array_column($stats, 'growth_rate')),
+                    'size' => array_sum(array_column($stats, 'disk_bytes'))
                 ];
                 
-                // Combine process-specific stats
                 $values = [
                     self::colorize(str_pad($combinedStats['time'], $widths['time']), self::COLOR_BLUE),
-                    self::colorize(str_pad(self::formatElapsedTime($combinedStats['elapsed']), $widths['elapsed']), self::COLOR_BLUE),
+                    self::colorize(str_pad(self::formatElapsedTime($combinedStats['elapsed']), $widths['elapsed']), self::COLOR_BLUE)
                 ];
                         
                 // Add Progress values
@@ -507,8 +509,8 @@ class ProgressDisplay {
                     self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
                     self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
                     self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
-                    self::colorize(str_pad($combinedStats['growth_rate'], $widths['growth']), self::COLOR_YELLOW),
-                    self::colorize(str_pad($combinedStats['size'], $widths['size']), self::COLOR_YELLOW)
+                    self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
+                    self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW)
                 ]);
         
 

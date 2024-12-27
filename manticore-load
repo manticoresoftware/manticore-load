@@ -74,7 +74,7 @@ $processes = $config->getProcesses();
 $child_pids = [];
 
 // Create shared memory segment for synchronization
-$shm_key = ftok(__FILE__, 't') & 0xFFFF; // Ensure key is within valid range
+$shm_key = ftok(__FILE__, 't'); // Ensure key is within valid range
 if ($shm_key === -1) {
     // Fallback to a static key if ftok fails
     $shm_key = 0x742E; // Arbitrary but unique key

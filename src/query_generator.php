@@ -188,7 +188,7 @@ class QueryGenerator {
         $type = $parts[0];
         
         // If it's not a known type, treat it as an exact value
-        if (!in_array($type, ['increment', 'string', 'text', 'int', 'float', 'boolean', 'array'])) {
+        if (!in_array($type, ['increment', 'string', 'text', 'int', 'float', 'boolean', 'array', 'array_float'])) {
             return [
                 'type' => 'exact',
                 'value' => $pattern
@@ -259,6 +259,18 @@ class QueryGenerator {
                     'max_value' => (int)$parts[4]
                 ];
                 
+            case 'array_float':
+                if (count($parts) !== 5) {
+                    throw new Exception("Array float pattern requires format: array_float/min_size/max_size/min_value/max_value");
+                }
+                return [
+                    'type' => 'array_float',
+                    'min_size' => (int)$parts[1],
+                    'max_size' => (int)$parts[2],
+                    'min_value' => (float)$parts[3],
+                    'max_value' => (float)$parts[4]
+                ];
+                
             default:
                 throw new Exception("Unknown pattern type: $type");
         }
@@ -312,9 +324,19 @@ class QueryGenerator {
                 
             case 'array':
                 $size = rand($pattern['min_size'], $pattern['max_size']);
-                return '(' . implode(',', array_map(function() use ($pattern) {
+                return implode(',', array_map(function() use ($pattern) {
                     return rand($pattern['min_value'], $pattern['max_value']);
-                }, range(1, $size))) . ')';
+                }, range(1, $size)));
+                
+            case 'array_float':
+                $size = rand($pattern['min_size'], $pattern['max_size']);
+                return implode(',', array_map(function() use ($pattern) {
+                    return round(
+                        $pattern['min_value'] + 
+                        mt_rand() / mt_getrandmax() * ($pattern['max_value'] - $pattern['min_value']), 
+                        2
+                    );
+                }, range(1, $size)));
                 
             default:
                 throw new Exception("Unknown field type '{$pattern['type']}'");

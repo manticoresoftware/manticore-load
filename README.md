@@ -157,6 +157,8 @@ batch         Time          Total Docs    Docs/Sec     Avg QPS      p99 QPS     
 | `<text/N/M>`              | Random text with N to M words                    |
 | `<text/{path}/MIN/MAX>`   | Random text using words from file, MIN to MAX words |
 | `<int/N/M>`               | Random integer between N and M                   |
+| `<array/size_min/size_max/val_min/val_max>` | Array of random integers, size between size_min and size_max, values between val_min and val_max |
+| `<array_float/size_min/size_max/val_min/val_max>` | Array of random floats, size between size_min and size_max, values between val_min and val_max |
 
 ---
 

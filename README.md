@@ -41,7 +41,7 @@ Just install `manticore-extra` dev package or release version higher than 6.3.8.
 2. Run:
    ```
    cd manticore-load
-   manticore-load --help
+   ./manticore-load --help
    ```
 
 ---

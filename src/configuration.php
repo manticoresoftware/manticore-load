@@ -38,6 +38,7 @@ class Configuration implements ArrayAccess {
         'latency-histograms::',
         'help',
         'together',
+        'column:',
     ];
     
     /** @var array Default configuration values */
@@ -85,7 +86,10 @@ class Configuration implements ArrayAccess {
     private function parseCommandLine($argv) {
         $options = [];
         $process_options = [];
-        $per_process_params = ['drop', 'batch-size', 'threads', 'total', 'iterations', 'init', 'load'];
+        $per_process_params = [
+            'drop', 'batch-size', 'threads', 'total', 
+            'iterations', 'init', 'load', 'column'
+        ];
         $index = 1;
         
         for ($i = 1; $i < count($argv); $i++) {
@@ -171,6 +175,15 @@ class Configuration implements ArrayAccess {
      */
     private function initializeOptions($options) {
         $this->options = array_merge($this->defaults, $options);
+        
+        // Parse column option if present
+        if (isset($this->options['column'])) {
+            $parts = explode('/', $this->options['column'], 2);
+            if (count($parts) === 2) {
+                $this->options['column_name'] = $parts[0];
+                $this->options['column_value'] = $parts[1];
+            }
+        }
         
         foreach ($this->processes as &$process) {
             $process = array_merge(
@@ -286,6 +299,8 @@ class Configuration implements ArrayAccess {
             "                               options (threads, batch-size, load, etc). Global options\n" .
             "                               like host and port should be specified before the first --together\n" .
             "  --help                       Show this help message\n" .
+            "  --column=NAME/VALUE           Add custom column in quiet mode output\n" .
+            "                               Format: --column=name/value (e.g., batch/1000)\n" .
             
             "\nPattern formats in load command:\n" .
             "  value                        Exact value to use\n" .

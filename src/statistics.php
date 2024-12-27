@@ -23,20 +23,24 @@ class Statistics {
     private $latency_histogram;       // For histogram-based latency tracking
     private $latency_stats = [];      // For simple array-based latency tracking
     private $use_histograms;          // Controls which latency tracking method to use
+    private $config;                  // Configuration object
+    private $process_index;           // Process index
 
     /**
      * Initializes statistics tracking with specified batch size and query type
      * @param int $batch_size Size of operation batches
      * @param bool $is_insert_query Whether tracking inserts (true) or reads (false)
-     * @param bool $use_histograms Whether to use histogram-based latency tracking
+     * @param Configuration $config Configuration object
      */
-    public function __construct($batch_size, $is_insert_query, $use_histograms = true) {
+    public function __construct($batch_size, $is_insert_query, $config, $process_index) {
         $this->start_time = microtime(true);
         $this->batch_size = $batch_size;
         $this->is_insert_query = $is_insert_query;
-        $this->use_histograms = $use_histograms;
+        $this->use_histograms = $config->get('latency-histograms');
+        $this->config = $config;
+        $this->process_index = $process_index;
         
-        if ($use_histograms) {
+        if ($this->use_histograms) {
             $this->latency_histogram = new LatencyHistogram();
         }
     }
@@ -149,11 +153,45 @@ class Statistics {
      * @param array $qps_stats QPS statistics
      */
     private function printQuietReport($total_time, $qps_stats) {
+        $column_name = null;
+        $column_value = null;
+        
+        if ($this->config && isset($this->config->getProcessConfig($this->process_index)['column'])) {
+            $parts = explode('/', $this->config->getProcessConfig($this->process_index)['column'], 2);
+            if (count($parts) === 2) {
+                $column_name = $parts[0];
+                $column_value = $parts[1];
+            }
+        }
+        
         if ($this->is_insert_query) {
-            printf("\n%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n",
+            $format = "\n";
+            $values = [];
+            
+            // Add custom column if specified
+            if ($column_name) {
+                $format .= "%-12s  ";
+                $values[] = $column_name;
+            }
+            
+            $format .= "%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n";
+            $values = array_merge($values, [
                 "Time", "Total Docs", "Docs/Sec", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
-                "Lat Avg", "Lat p50", "Lat p95", "Lat p99");
-            printf("%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n",
+                "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
+            ]);
+            vprintf($format, $values);
+
+            $format = "";
+            $values = [];
+            
+            // Add custom column value if specified
+            if ($column_value) {
+                $format .= "%-12s  ";
+                $values[] = $column_value;
+            }
+            
+            $format .= "%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n";
+            $values = array_merge($values, [
                 sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
                 $this->completed_operations,
                 $total_time > 0 ? round($this->completed_operations / $total_time) : 0,
@@ -162,12 +200,35 @@ class Statistics {
                 $this->getLatencyStats()['avg'],
                 $this->getLatencyStats()['p50'],
                 $this->getLatencyStats()['p95'],
-                $this->getLatencyStats()['p99']);
+                $this->getLatencyStats()['p99']
+            ]);
+            vprintf($format, $values);
         } else {
-            printf("\n%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n",
+            $format = "\n";
+            $values = [];
+            
+            if ($column_name) {
+                $format .= "%-12s  ";
+                $values[] = $column_name;
+            }
+            
+            $format .= "%-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s  %-12s\n";
+            $values = array_merge($values, [
                 "Time", "Total Ops", "Avg QPS", "p99 QPS", "p95 QPS", "p5 QPS", "p1 QPS",
-                "Lat Avg", "Lat p50", "Lat p95", "Lat p99");
-            printf("%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n",
+                "Lat Avg", "Lat p50", "Lat p95", "Lat p99"
+            ]);
+            vprintf($format, $values);
+
+            $format = "";
+            $values = [];
+            
+            if ($column_value) {
+                $format .= "%-12s  ";
+                $values[] = $column_value;
+            }
+            
+            $format .= "%-12s  %-12d  %-12d  %-12d  %-12d  %-12d  %-12d  %-12.1f  %-12.1f  %-12.1f  %-12.1f\n";
+            $values = array_merge($values, [
                 sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
                 $this->completed_operations,
                 $qps_stats['avg'], $qps_stats['p99'], $qps_stats['p95'],
@@ -175,7 +236,9 @@ class Statistics {
                 $this->getLatencyStats()['avg'],
                 $this->getLatencyStats()['p50'],
                 $this->getLatencyStats()['p95'],
-                $this->getLatencyStats()['p99']);
+                $this->getLatencyStats()['p99']
+            ]);
+            vprintf($format, $values);
         }
     }
     /**

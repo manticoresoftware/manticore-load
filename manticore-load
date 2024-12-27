@@ -392,7 +392,8 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         $process_config['batch-size'],
         strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
         strpos(strtolower($process_config['load_command']), 'replace') === 0,
-        $config->get('latency-histograms')
+        $config,
+        $process_index
     );
 
     // Create progress display instance

@@ -100,6 +100,27 @@ manticore-load \
   --load="SELECT * FROM t WHERE MATCH('<text/10/20>')"
 ```
 
+### Quiet Mode with Custom Column
+
+Run load test with a custom column showing batch size:
+
+```bash
+manticore-load \
+  --quiet \
+  --column=batch/1000 \
+  --batch-size=1000 \
+  --threads=4 \
+  --total=1000000 \
+  --load="INSERT INTO test(id,name) VALUES(<increment>,'<text/10/100>')"
+```
+
+This will add a "batch" column with value "1000" at the beginning of the output table:
+
+```
+batch         Time          Total Docs    Docs/Sec     Avg QPS      p99 QPS      p95 QPS      p5 QPS       p1 QPS       Lat Avg      Lat p50      Lat p95      Lat p99
+1000          00:05        50000         10000        95           120          110          80           75           10.5         9.8          15.2         18.4
+```
+
 ---
 
 ## Configuration Options
@@ -113,6 +134,7 @@ manticore-load \
 | `--quiet`     | Suppress output                        |
 | `--verbose`   | Show detailed progress and queries     |
 | `--no-color`  | Disable terminal colorization          |
+| `--column`    | Add custom column in quiet mode output (format: name/value) |
 
 ### Workload-Specific Options
 

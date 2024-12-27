@@ -281,7 +281,10 @@ class Configuration implements ArrayAccess {
             "  --latency-histograms=[0|1]   Use histogram-based latency tracking (default: 1)\n" .
             "                               1: memory-efficient but approximate percentiles\n" .
             "                               0: precise percentiles but higher memory usage\n" .
-            "  --together                   Run multiple processes with different configurations\n" .
+            "  --together                   Run multiple processes with different configurations.\n" .
+            "                               Each section after --together can have its own process-specific\n" .
+            "                               options (threads, batch-size, load, etc). Global options\n" .
+            "                               like host and port should be specified before the first --together\n" .
             "  --help                       Show this help message\n" .
             
             "\nPattern formats in load command:\n" .
@@ -295,35 +298,30 @@ class Configuration implements ArrayAccess {
             "  <boolean>                    Random true or false\n" .
             "  <array/2/10/100/1000>        Array of 2-10 elements, values 100-1000\n\n" .
             
-            "Examples:\n" .
-            "  # Load 1M documents in batches of 1000:\n" .
-            "  ./manticore-load \\\n" .
-            "    --batch-size=1000 \\\n" .
-            "    --threads=5 \\\n" .
-            "    --total=1000000 \\\n" .
-            "    --init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
-            "    --load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\"\n\n" .
+            "Examples:\n\n" .
+            "# Load 1M documents in batches of 1000:\n" .
+            "manticore-load \\\n" .
+            "--batch-size=1000 \\\n" .
+            "--threads=5 \\\n" .
+            "--total=1000000 \\\n" .
+            "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
+            "--load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\"\n\n" .
             
-            "  # Execute 1000 search queries:\n" .
-            "  ./manticore-load \\\n" .
-            "    --threads=5 \\\n" .
-            "    --total=10000 \\\n" .
-            "    --load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n" .
-            
-            "\nMulti-process options with --together:\n" .
-            "  The --together flag separates different process configurations. Each section can have\n" .
-            "  its own process-specific options (threads, batch-size, load, etc). Global options\n" .
-            "  like host and port should be specified before the first --together.\n\n" .
-            
-            "Example with multiple processes:\n" .
-            "  # First process inserts data, second process runs queries simultaneously\n" .
-            "  ./manticore-load \\\n" .
-            "    --host=127.0.0.1 \\\n" .
-            "    --drop --batch-size=1000 --threads=4 --total=1000000 \\\n" .
-            "    --load=\"INSERT INTO test VALUES...\" \\\n" .
-            "    --together \\\n" .
-            "    --threads=1 --total=5000 \\\n" .
-            "    --load=\"SELECT * FROM test WHERE...\"\n"
+            "# Execute 1000 search queries:\n" .
+            "manticore-load \\\n" .
+            "--threads=5 \\\n" .
+            "--total=10000 \\\n" .
+            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n" .
+           
+            "# First process inserts data, second process runs queries simultaneously\n" .
+            "manticore-load \\\n" .
+            "--host=127.0.0.1 \\\n" .
+            "--drop --batch-size=1000 --threads=4 --total=1000000 \\\n" .
+            "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
+            "--load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\" \\\n" .
+            "--together \\\n" .
+            "--threads=1 --total=5000 \\\n" .
+            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n"
         );
     }
 

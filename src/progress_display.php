@@ -40,9 +40,9 @@ class ProgressDisplay {
 
     /**
      * Format string for progress display output
-     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size growth, Size
+     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size growth, Size, Docs
      */
-    private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-11s  %-10s\n";
+    private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-11s  %-10s  %-8s\n";
 
     private bool $quiet;
     private int $total_batches;
@@ -135,7 +135,8 @@ class ProgressDisplay {
             self::colorize(str_pad("Chunks", $widths[7]), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths[8]), self::COLOR_RED),
             self::colorize(str_pad("Size growth", $widths[9]), self::COLOR_YELLOW),
-            self::colorize(str_pad("Size", $widths[10]), self::COLOR_YELLOW)
+            self::colorize(str_pad("Size", $widths[10]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Docs", $widths[11]), self::COLOR_YELLOW)
         ];
         
         $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
@@ -186,7 +187,7 @@ class ProgressDisplay {
         }
     }
 
-    private function formatProgressLine($time, $elapsed, $progress, $qps, $dps, $cpu, $workers, $chunks, $merging, $write_speed, $size) {
+    private function formatProgressLine($time, $elapsed, $progress, $qps, $dps, $cpu, $workers, $chunks, $merging, $write_speed, $size, $docs) {
         // Extract column widths from PROGRESS_FORMAT
         preg_match_all('/%-(\d+)s/', self::$PROGRESS_FORMAT, $matches);
         $widths = $matches[1];
@@ -203,12 +204,14 @@ class ProgressDisplay {
         $merging = $merging ? self::colorize(str_pad($merging, $widths[8]), self::COLOR_RED) : str_pad($merging, $widths[8]);
         $write_speed = self::colorize(str_pad($write_speed, $widths[9]), self::COLOR_YELLOW);
         $size = self::colorize(str_pad($size, $widths[10]), self::COLOR_YELLOW);
+        $docs = self::colorize(str_pad($docs, $widths[11]), self::COLOR_YELLOW);
         
         return sprintf(self::$PROGRESS_FORMAT,
             $time, $elapsed, $progress, $qps, $dps, $cpu, $workers,
             $chunks, $merging, 
             self::formatBytes($write_speed),
-            self::formatBytes($size)
+            self::formatBytes($size),
+            self::formatNumber($docs)
         );
     }
 
@@ -372,7 +375,8 @@ class ProgressDisplay {
             'chunks' => 8,
             'merging' => 8,
             'growth' => 11,
-            'size' => 10
+            'size' => 10,
+            'docs' => 8
         ]);
 
         // Define new format string with adjusted widths
@@ -419,7 +423,8 @@ class ProgressDisplay {
             self::colorize(str_pad("Chunks", $widths['chunks']), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths['merging']), self::COLOR_RED),
             self::colorize(str_pad("Size growth", $widths['growth']), self::COLOR_YELLOW),
-            self::colorize(str_pad("Size", $widths['size']), self::COLOR_YELLOW)
+            self::colorize(str_pad("Size", $widths['size']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Docs", $widths['docs']), self::COLOR_YELLOW)
         ]);
 
         // Prepare header printing function
@@ -494,7 +499,8 @@ class ProgressDisplay {
                         return $carry || $item['is_optimizing'];
                     }, false),
                     'growth_rate' => array_sum(array_column($stats, 'growth_rate')),
-                    'size' => array_sum(array_column($stats, 'disk_bytes'))
+                    'size' => array_sum(array_column($stats, 'disk_bytes')),
+                    'docs' => array_sum(array_column($stats, 'indexed_documents'))
                 ];
             } else {
                 // Print at least time info when no stats are available yet
@@ -511,7 +517,8 @@ class ProgressDisplay {
                     'chunks' => 0,
                     'is_optimizing' => '',
                     'growth_rate' => 0,
-                    'size' => 0
+                    'size' => 0,
+                    'docs' => 0
                 ];
             }
             
@@ -536,7 +543,8 @@ class ProgressDisplay {
                 self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
                 self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
-                self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW)
+                self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW),
+                self::colorize(str_pad(self::formatNumber($combinedStats['docs']), $widths['docs']), self::COLOR_YELLOW)
             ]);
         
 
@@ -552,5 +560,16 @@ class ProgressDisplay {
             }
             sleep(1);
         }
+    }
+
+    private static function formatNumber($number) {
+        if ($number >= 1000000000) {
+            return sprintf("%.1fB", $number / 1000000000);
+        } elseif ($number >= 1000000) {
+            return sprintf("%.1fM", $number / 1000000);
+        } elseif ($number >= 1000) {
+            return sprintf("%.1fK", $number / 1000);
+        }
+        return (string)$number;
     }
 }

@@ -457,6 +457,7 @@ class MonitoringStats {
         $is_optimizing = 0;
         $disk_bytes = 0;
         $ram_bytes = 0;
+        $indexed_documents = 0;
         
         try {
             $result = mysqli_query($this->connection, "SHOW THREADS");
@@ -474,6 +475,7 @@ class MonitoringStats {
                             case 'optimizing': $is_optimizing = (int)$row['Value']; break;
                             case 'disk_bytes': $disk_bytes = (int)$row['Value']; break;
                             case 'ram_bytes': $ram_bytes = (int)$row['Value']; break;
+                            case 'indexed_documents': $indexed_documents = (int)$row['Value']; break;
                         }
                     }
                     mysqli_free_result($result);
@@ -509,6 +511,7 @@ class MonitoringStats {
             'is_optimizing' => $is_optimizing,
             'disk_bytes' => $disk_bytes,
             'ram_bytes' => $ram_bytes,
+            'indexed_documents' => $indexed_documents,
             'growth_rate' => $growth_rate
         ];
     }

@@ -340,6 +340,7 @@ class ProgressDisplay {
 
         $linesBeforeHeader = 20;
         $linesPrinted = 0;
+        $startTime = microtime(true);
 
         // Create a mapping of PIDs to simple indices (1-based)
         $pidToIndex = array_flip(array_values($pids));
@@ -436,6 +437,7 @@ class ProgressDisplay {
 
         while (true) {
             $stats = [];
+            $currentTime = microtime(true);
             
             $runningPids = [];
             // Check which processes are still running
@@ -480,11 +482,11 @@ class ProgressDisplay {
                     $headerPrinted = true;
                 }
 
-                // Take common stats from any process
+                // Take common stats from any process but calculate time independently
                 $anyStats = reset($stats);
                 $combinedStats = [
-                    'time' => $anyStats['time'],
-                    'elapsed' => $anyStats['elapsed'],
+                    'time' => date('H:i:s'),
+                    'elapsed' => $currentTime - $startTime,
                     'cpu' => $anyStats['cpu'],
                     'workers' => $anyStats['workers'],
                     'chunks' => array_sum(array_column($stats, 'disk_chunks')),
@@ -494,44 +496,60 @@ class ProgressDisplay {
                     'growth_rate' => array_sum(array_column($stats, 'growth_rate')),
                     'size' => array_sum(array_column($stats, 'disk_bytes'))
                 ];
-                
-                $values = [
-                    self::colorize(str_pad($combinedStats['time'], $widths['time']), self::COLOR_BLUE),
-                    self::colorize(str_pad(self::formatElapsedTime($combinedStats['elapsed']), $widths['elapsed']), self::COLOR_BLUE)
-                ];
-                        
-                // Add Progress values
-                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['progress'] : '-', 10);
-
-                // Add QPS values
-                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['qps'] : '-', 7);
-
-                // Add DPS values
-                foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['dps'] : '-', 7);
-
-                // Add common values
-                $values = array_merge($values, [
-                    self::colorize(str_pad($combinedStats['cpu'], $widths['cpu']), self::COLOR_YELLOW),
-                    self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
-                    self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
-                    self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
-                    self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
-                    self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW)
-                ]);
-        
-
-                // Format and print the line
-                printf(self::$PROGRESS_FORMAT, ...$values);
-                $linesPrinted++;
-
-                // Reprint header if needed
-                if ($linesPrinted >= $linesBeforeHeader) {
-                    echo "\n";
+            } else {
+                // Print at least time info when no stats are available yet
+                if (!$headerPrinted && !$config->get('quiet')) {
                     $printHeader();
-                    $linesPrinted = 0;
+                    $headerPrinted = true;
                 }
+
+                $combinedStats = [
+                    'time' => date('H:i:s'),
+                    'elapsed' => $currentTime - $startTime,
+                    'cpu' => 'N/A',
+                    'workers' => '-',
+                    'chunks' => 0,
+                    'is_optimizing' => '',
+                    'growth_rate' => 0,
+                    'size' => 0
+                ];
             }
             
+            $values = [
+                self::colorize(str_pad($combinedStats['time'], $widths['time']), self::COLOR_BLUE),
+                self::colorize(str_pad(self::formatElapsedTime($combinedStats['elapsed']), $widths['elapsed']), self::COLOR_BLUE)
+            ];
+                        
+            // Add Progress values
+            foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['progress'] : '-', 10);
+
+            // Add QPS values
+            foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['qps'] : '-', 7);
+
+            // Add DPS values
+            foreach ($pids as $pid) $values[] = str_pad(isset($stats[$pid]) ? $stats[$pid]['dps'] : '-', 7);
+
+            // Add common values
+            $values = array_merge($values, [
+                self::colorize(str_pad($combinedStats['cpu'], $widths['cpu']), self::COLOR_YELLOW),
+                self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
+                self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
+                self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
+                self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
+                self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW)
+            ]);
+        
+
+            // Format and print the line
+            printf(self::$PROGRESS_FORMAT, ...$values);
+            $linesPrinted++;
+
+            // Reprint header if needed
+            if ($linesPrinted >= $linesBeforeHeader) {
+                echo "\n";
+                $printHeader();
+                $linesPrinted = 0;
+            }
             sleep(1);
         }
     }

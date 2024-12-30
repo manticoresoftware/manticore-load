@@ -42,7 +42,7 @@ class ProgressDisplay {
      * Format string for progress display output
      * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size growth, Size, Docs
      */
-    private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-11s  %-10s  %-8s\n";
+    private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-10s  %-8s\n";
 
     private bool $quiet;
     private int $total_batches;
@@ -144,9 +144,8 @@ class ProgressDisplay {
             self::colorize(str_pad("Workers", $widths[6]), self::COLOR_YELLOW),
             self::colorize(str_pad("Chunks", $widths[7]), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths[8]), self::COLOR_RED),
-            self::colorize(str_pad("Disk growth", $widths[9]), self::COLOR_YELLOW),
-            self::colorize(str_pad("Disk", $widths[10]), self::COLOR_YELLOW),
-            self::colorize(str_pad("Inserted", $widths[11]), self::COLOR_YELLOW)
+            self::colorize(str_pad("Disk", $widths[9]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Inserted", $widths[10]), self::COLOR_YELLOW)
         ];
         
         $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
@@ -164,8 +163,6 @@ class ProgressDisplay {
      * @param object $load_stats Load statistics object
      */
     public function update($processed_batches, $batch_size, $common_monitoring, $load_stats) {
-        $stats = $common_monitoring->getStats();
-
         $now = microtime(true);
         $interval_elapsed = $now - $this->last_update_time;
         $total_elapsed = $now - $this->start_time;
@@ -178,16 +175,13 @@ class ProgressDisplay {
         $total_docs = $processed_batches * ($this->is_insert ? $batch_size : 1);
         $dps = $interval_elapsed > 0 ? ($total_docs / $interval_elapsed) : 0;
         
-        $time = date('H:i:s');
-        $stats['time'] = $time;
-        $stats['elapsed'] = $total_elapsed;
-        $stats['progress'] = $progress;
-        $stats['qps'] = (string)$qps;
-        $stats['dps'] = $this->is_insert ? ($dps >= 1000 ? sprintf("%.1fK", $dps/1000/$total_elapsed) : sprintf("%.0f", $dps/$total_elapsed)) : "-";
-        $stats['cpu'] = sprintf("%.4s", self::getCpuUsage());
-        $stats['workers'] = (string)$stats['thread_count'];
-        $stats['chunks'] = (string)$stats['disk_chunks'];
-        $stats['is_optimizing'] = $stats['is_optimizing'] ? "yes" : "";
+        $stats = [
+            'time' => date('H:i:s'),
+            'elapsed' => $total_elapsed,
+            'progress' => $progress,
+            'qps' => (string)$qps,
+            'dps' => $this->is_insert ? ($dps >= 1000 ? sprintf("%.1fK", $dps/1000/$total_elapsed) : sprintf("%.0f", $dps/$total_elapsed)) : "-",
+        ];
 
         $this->last_update_time = $now;
         $this->last_processed_batches = $processed_batches;
@@ -384,7 +378,6 @@ class ProgressDisplay {
             'workers' => 9,
             'chunks' => 8,
             'merging' => 8,
-            'growth' => 11,
             'size' => 10,
             'inserted' => 8
         ]);
@@ -432,7 +425,6 @@ class ProgressDisplay {
             self::colorize(str_pad("Workers", $widths['workers']), self::COLOR_YELLOW),
             self::colorize(str_pad("Chunks", $widths['chunks']), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths['merging']), self::COLOR_RED),
-            self::colorize(str_pad("Disk growth", $widths['growth']), self::COLOR_YELLOW),
             self::colorize(str_pad("Disk", $widths['size']), self::COLOR_YELLOW),
             self::colorize(str_pad("Inserted", $widths['inserted']), self::COLOR_YELLOW)
         ]);
@@ -461,9 +453,32 @@ class ProgressDisplay {
             self::$fileHandles[$pid] = null;
         }
 
+        $monitoring = [];
+
+        // Initialize monitoring for each table
+        foreach ($pids as $pid) {
+            $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+            if ($processConfig && !empty($processConfig['table'])) {
+                $table = $processConfig['table'];
+                if (!isset($monitoring[$table])) {
+                    $monitoring[$table] = new MonitoringStats(
+                        $config->get('host'), 
+                        $config->get('port'),
+                        $table
+                    );
+                }
+            }
+        }
+
         while (true) {
             $stats = [];
             $currentTime = microtime(true);
+            
+            // Get current monitoring stats for each table
+            $monitoringStats = [];
+            foreach ($monitoring as $table => $monitor) {
+                $monitoringStats[$table] = $monitor->getStats();
+            }
             
             $runningPids = [];
             // Check which processes are still running
@@ -485,6 +500,10 @@ class ProgressDisplay {
                 }
                 self::$fileHandles = [];
                 self::$filePositions = [];
+                // Clean up monitoring connections
+                foreach ($monitoring as $monitor) {
+                    $monitor->close();
+                }
                 break;
             }
             
@@ -522,9 +541,21 @@ class ProgressDisplay {
                         if ($lastLine !== null) {
                             $processStats = json_decode(trim($lastLine), true);
                             if ($processStats) {
-                                $stats[$pid] = $processStats;
-                                // Store last known stats for this PID
-                                self::$lastKnownStats[$pid] = $processStats;
+                                $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                                $table = $processConfig['table'] ?? '';
+                                $tableStats = $monitoringStats[$table] ?? reset($monitoringStats);
+                                
+                                // Merge monitoring stats with process stats
+                                $stats[$pid] = array_merge($processStats, [
+                                    'cpu' => sprintf("%.4s", self::getCpuUsage()),
+                                    'workers' => (string)$tableStats['thread_count'],
+                                    'disk_chunks' => (string)$tableStats['disk_chunks'],
+                                    'is_optimizing' => $tableStats['is_optimizing'] ? "yes" : "",
+                                    'disk_bytes' => $tableStats['disk_bytes'],
+                                    'growth_rate' => $tableStats['growth_rate'],
+                                    'indexed_documents' => $tableStats['indexed_documents']
+                                ]);
+                                self::$lastKnownStats[$pid] = $stats[$pid];
                             }
                         } else if (isset(self::$lastKnownStats[$pid])) {
                             // Use last known stats if no new data
@@ -660,7 +691,6 @@ class ProgressDisplay {
                 self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
-                self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
                 self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW),
                 self::colorize(str_pad(self::formatNumber($combinedStats['inserted']), $widths['inserted']), self::COLOR_YELLOW)
             ]);

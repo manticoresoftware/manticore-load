@@ -59,6 +59,16 @@ class ProgressDisplay {
     private $tempFile;
     private string $tempFilePath;
 
+    // Add new class property to track processed lines
+    private static $processedLines = [];
+
+    // Add new property to store file handles and positions
+    private static $fileHandles = [];
+    private static $filePositions = [];
+
+    // Add new property to store last known stats
+    private static $lastKnownStats = [];
+
     /**
      * Initialize progress display
      * 
@@ -134,9 +144,9 @@ class ProgressDisplay {
             self::colorize(str_pad("Workers", $widths[6]), self::COLOR_YELLOW),
             self::colorize(str_pad("Chunks", $widths[7]), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths[8]), self::COLOR_RED),
-            self::colorize(str_pad("Size growth", $widths[9]), self::COLOR_YELLOW),
-            self::colorize(str_pad("Size", $widths[10]), self::COLOR_YELLOW),
-            self::colorize(str_pad("Docs", $widths[11]), self::COLOR_YELLOW)
+            self::colorize(str_pad("Disk growth", $widths[9]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Disk", $widths[10]), self::COLOR_YELLOW),
+            self::colorize(str_pad("Inserted", $widths[11]), self::COLOR_YELLOW)
         ];
         
         $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
@@ -376,7 +386,7 @@ class ProgressDisplay {
             'merging' => 8,
             'growth' => 11,
             'size' => 10,
-            'docs' => 8
+            'inserted' => 8
         ]);
 
         // Define new format string with adjusted widths
@@ -422,9 +432,9 @@ class ProgressDisplay {
             self::colorize(str_pad("Workers", $widths['workers']), self::COLOR_YELLOW),
             self::colorize(str_pad("Chunks", $widths['chunks']), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths['merging']), self::COLOR_RED),
-            self::colorize(str_pad("Size growth", $widths['growth']), self::COLOR_YELLOW),
-            self::colorize(str_pad("Size", $widths['size']), self::COLOR_YELLOW),
-            self::colorize(str_pad("Docs", $widths['docs']), self::COLOR_YELLOW)
+            self::colorize(str_pad("Disk growth", $widths['growth']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Disk", $widths['size']), self::COLOR_YELLOW),
+            self::colorize(str_pad("Inserted", $widths['inserted']), self::COLOR_YELLOW)
         ]);
 
         // Prepare header printing function
@@ -439,6 +449,17 @@ class ProgressDisplay {
         };
 
         $headerPrinted = false;  // Add flag to track if header has been printed
+
+        // Initialize processed lines counter for each PID
+        foreach ($pids as $pid) {
+            self::$processedLines[$pid] = 0;
+        }
+
+        // Initialize file tracking for each PID
+        foreach ($pids as $pid) {
+            self::$filePositions[$pid] = 0;
+            self::$fileHandles[$pid] = null;
+        }
 
         while (true) {
             $stats = [];
@@ -455,10 +476,19 @@ class ProgressDisplay {
             }
             
             if (empty($runningPids)) {
+                self::$lastKnownStats = [];  // Clear stored stats
+                // Clean up file handles
+                foreach (self::$fileHandles as $fh) {
+                    if (is_resource($fh)) {
+                        fclose($fh);
+                    }
+                }
+                self::$fileHandles = [];
+                self::$filePositions = [];
                 break;
             }
             
-            // Try to read latest line from each process file
+            // Try to read new lines from each process file
             foreach ($runningPids as $pid) {
                 $pattern = "/tmp/manticore_load_progress_{$pid}_*";
                 $files = glob($pattern);
@@ -467,14 +497,38 @@ class ProgressDisplay {
                     $filepath = $files[0];
                     
                     if (file_exists($filepath)) {
-                        // Read the last line of the file
-                        $lines = file($filepath);
-                        if ($lines) {
-                            $lastLine = trim(end($lines));
-                            $processStats = json_decode($lastLine, true);
+                        // Open file if not already opened
+                        if (!isset(self::$fileHandles[$pid]) || !is_resource(self::$fileHandles[$pid])) {
+                            self::$fileHandles[$pid] = @fopen($filepath, 'r');
+                            if (!self::$fileHandles[$pid]) {
+                                continue;
+                            }
+                        }
+                        
+                        $fh = self::$fileHandles[$pid];
+                        // Seek to last position
+                        fseek($fh, self::$filePositions[$pid]);
+                        
+                        // Read all new lines
+                        $lastLine = null;
+                        while (($line = fgets($fh)) !== false) {
+                            $lastLine = $line;
+                        }
+                        
+                        // Store current position
+                        self::$filePositions[$pid] = ftell($fh);
+                        
+                        // Process last line if we have one
+                        if ($lastLine !== null) {
+                            $processStats = json_decode(trim($lastLine), true);
                             if ($processStats) {
                                 $stats[$pid] = $processStats;
+                                // Store last known stats for this PID
+                                self::$lastKnownStats[$pid] = $processStats;
                             }
+                        } else if (isset(self::$lastKnownStats[$pid])) {
+                            // Use last known stats if no new data
+                            $stats[$pid] = self::$lastKnownStats[$pid];
                         }
                     }
                 }
@@ -489,6 +543,28 @@ class ProgressDisplay {
 
                 // Take common stats from any process but calculate time independently
                 $anyStats = reset($stats);
+                
+                // Create array of tables and their documents
+                $tablesDocs = [];
+                foreach ($stats as $pid => $stat) {
+                    $processIndex = $pidToIndex[$pid];
+                    $processConfig = $config->getProcessConfig($processIndex);
+                    // Skip if process config not found
+                    if (!$processConfig) {
+                        continue;
+                    }
+                    
+                    // Only count documents for insert operations
+                    if ($processConfig['load_type'] === 'insert') {
+                        $table = $processConfig['table'] ?? '';
+                        if (!isset($tablesDocs[$table])) {
+                            $tablesDocs[$table] = 0;
+                        }
+                        // Take max docs count for processes working with the same table
+                        $tablesDocs[$table] = max($tablesDocs[$table], $stat['indexed_documents']);
+                    }
+                }
+                
                 $combinedStats = [
                     'time' => date('H:i:s'),
                     'elapsed' => $currentTime - $startTime,
@@ -500,9 +576,51 @@ class ProgressDisplay {
                     }, false),
                     'growth_rate' => array_sum(array_column($stats, 'growth_rate')),
                     'size' => array_sum(array_column($stats, 'disk_bytes')),
-                    'docs' => array_sum(array_column($stats, 'indexed_documents'))
+                    'inserted' => array_sum($tablesDocs) // Sum documents across different tables
+                ];
+            } else if (!empty(self::$lastKnownStats)) {
+                // Use last known stats for display
+                if (!$headerPrinted && !$config->get('quiet')) {
+                    $printHeader();
+                    $headerPrinted = true;
+                }
+
+                // Take common stats from last known values
+                $anyStats = reset(self::$lastKnownStats);
+                
+                // Calculate tablesDocs using last known values
+                $tablesDocs = [];
+                foreach (self::$lastKnownStats as $pid => $stat) {
+                    $processIndex = $pidToIndex[$pid];
+                    $processConfig = $config->getProcessConfig($processIndex);
+                    if (!$processConfig) {
+                        continue;
+                    }
+                    
+                    if ($processConfig['load_type'] === 'insert') {
+                        $table = $processConfig['table'] ?? '';
+                        if (!isset($tablesDocs[$table])) {
+                            $tablesDocs[$table] = 0;
+                        }
+                        $tablesDocs[$table] = max($tablesDocs[$table], $stat['indexed_documents']);
+                    }
+                }
+
+                $combinedStats = [
+                    'time' => date('H:i:s'),
+                    'elapsed' => $currentTime - $startTime,
+                    'cpu' => $anyStats['cpu'],
+                    'workers' => $anyStats['workers'],
+                    'chunks' => array_sum(array_column(self::$lastKnownStats, 'disk_chunks')),
+                    'is_optimizing' => array_reduce(self::$lastKnownStats, function($carry, $item) {
+                        return $carry || $item['is_optimizing'];
+                    }, false),
+                    'growth_rate' => 0,
+                    'size' => array_sum(array_column(self::$lastKnownStats, 'disk_bytes')),
+                    'inserted' => array_sum($tablesDocs)
                 ];
             } else {
+                // No stats available at all
                 // Print at least time info when no stats are available yet
                 if (!$headerPrinted && !$config->get('quiet')) {
                     $printHeader();
@@ -518,7 +636,7 @@ class ProgressDisplay {
                     'is_optimizing' => '',
                     'growth_rate' => 0,
                     'size' => 0,
-                    'docs' => 0
+                    'inserted' => 0
                 ];
             }
             
@@ -544,7 +662,7 @@ class ProgressDisplay {
                 self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
                 self::colorize(str_pad(self::formatBytes($combinedStats['growth_rate']), $widths['growth']), self::COLOR_YELLOW),
                 self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW),
-                self::colorize(str_pad(self::formatNumber($combinedStats['docs']), $widths['docs']), self::COLOR_YELLOW)
+                self::colorize(str_pad(self::formatNumber($combinedStats['inserted']), $widths['inserted']), self::COLOR_YELLOW)
             ]);
         
 

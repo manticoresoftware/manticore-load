@@ -471,12 +471,94 @@ class Configuration implements ArrayAccess {
     }
 
     /**
+     * Add new method to extract table name from SQL query
+     * 
+     * @param string $sql SQL query to extract table name from
+     * @return string Extracted table name
+     */
+    private function extractTableName($sql) {
+        if (!$sql) {
+            return '';
+        }
+        
+        $sql = strtolower($sql);
+        
+        // For INSERT/REPLACE queries
+        if (preg_match('/^(?:insert\s+into|replace\s+into)\s+([^\s(]+)/i', $sql, $matches)) {
+            return $matches[1];
+        }
+        
+        // For CREATE TABLE queries
+        if (preg_match('/^create\s+table\s+([^\s(]+)/i', $sql, $matches)) {
+            return $matches[1];
+        }
+                
+        return '';
+    }
+
+    /**
+     * Extracts operation type from SQL query
+     * 
+     * @param string $sql SQL query to analyze
+     * @return string Operation type: 'select', 'insert', 'replace', 'delete', 'update', or 'other'
+     */
+    private function extractLoadType($sql) {
+        if (!$sql) {
+            return 'other';
+        }
+        
+        $sql = trim(strtolower($sql));
+        
+        if (strpos($sql, 'select') === 0) {
+            return 'select';
+        }
+        if (strpos($sql, 'insert') === 0) {
+            return 'insert';
+        }
+        if (strpos($sql, 'replace') === 0) {
+            return 'replace';
+        }
+        if (strpos($sql, 'delete') === 0) {
+            return 'delete';
+        }
+        if (strpos($sql, 'update') === 0) {
+            return 'update';
+        }
+        
+        return 'other';
+    }
+
+    /**
      * Gets configuration for a specific process
      * 
      * @param int $index Process index
      * @return array|null Process configuration or null if not found
      */
     public function getProcessConfig($index) {
-        return $this->processes[$index] ?? null;
+        if (!isset($this->processes[$index])) {
+            return null;
+        }
+        
+        $config = $this->processes[$index];
+        
+        // Extract table name from SQL queries
+        $table = '';
+        if (isset($config['load_command'])) {
+            $table = $this->extractTableName($config['load_command']);
+        }
+        if (!$table && isset($config['init_command'])) {
+            $table = $this->extractTableName($config['init_command']);
+        }
+        
+        $config['table'] = $table;
+        
+        // Add operation type
+        if (isset($config['load_command'])) {
+            $config['load_type'] = $this->extractLoadType($config['load_command']);
+        } else {
+            $config['load_type'] = 'other';
+        }
+        
+        return $config;
     }
 }

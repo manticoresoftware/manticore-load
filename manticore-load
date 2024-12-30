@@ -105,6 +105,7 @@ shmop_write($stop_shm_id, "\0", 0);
 
 // This function waits for an idle mysql connection for the $query, runs it and exits
 function process($query, &$all_links, &$requests, &$statistics) {
+    global $stop_shm_id;
     try {
         foreach ($all_links as $k=>$link) {
             if (@$requests[$k]) continue;
@@ -113,12 +114,24 @@ function process($query, &$all_links, &$requests, &$statistics) {
             @$requests[$k] = $start_time;
             return true;
         }
+        $last_check = microtime(true);
         do {
             $links = $errors = $reject = array();
             foreach ($all_links as $link) {
                 $links[] = $errors[] = $reject[] = $link;
             }
             $count = @mysqli_poll($links, $errors, $reject, 0, 100);
+
+            // Check for stop signal every second
+            $current_time = microtime(true);
+            if ($current_time - $last_check >= 1.0) {
+                $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+                if ($stop_requested) {
+                    return 'stop_requested';  // Special return value
+                }
+                $last_check = $current_time;
+            }
+
             if ($count > 0) {
                 foreach ($links as $j=>$link) {
                     $res = @mysqli_reap_async_query($links[$j]);
@@ -500,7 +513,13 @@ function run_process($process_config, $config, $process_index, $num_processes) {
 
     // Process each query batch
     foreach ($batches as $query) {
-        if (!process($query, $all_links, $requests, $statistics)) {
+        $result = process($query, $all_links, $requests, $statistics);
+        if ($result === 'stop_requested') {
+            if (!$config->get('quiet')) {
+                ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
+            }
+            break;
+        } elseif ($result === false) {
             throw new Exception("ERROR processing query");
         }
         

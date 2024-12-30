@@ -40,7 +40,7 @@ class ProgressDisplay {
 
     /**
      * Format string for progress display output
-     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size growth, Size, Docs
+     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size, Docs
      */
     private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-10s  %-8s\n";
 
@@ -552,7 +552,6 @@ class ProgressDisplay {
                                     'disk_chunks' => (string)$tableStats['disk_chunks'],
                                     'is_optimizing' => $tableStats['is_optimizing'] ? "yes" : "",
                                     'disk_bytes' => $tableStats['disk_bytes'],
-                                    'growth_rate' => $tableStats['growth_rate'],
                                     'indexed_documents' => $tableStats['indexed_documents']
                                 ]);
                                 self::$lastKnownStats[$pid] = $stats[$pid];
@@ -605,9 +604,8 @@ class ProgressDisplay {
                     'is_optimizing' => array_reduce($stats, function($carry, $item) {
                         return $carry || $item['is_optimizing'];
                     }, false),
-                    'growth_rate' => array_sum(array_column($stats, 'growth_rate')),
                     'size' => array_sum(array_column($stats, 'disk_bytes')),
-                    'inserted' => array_sum($tablesDocs) // Sum documents across different tables
+                    'inserted' => array_sum($tablesDocs)
                 ];
             } else if (!empty(self::$lastKnownStats)) {
                 // Use last known stats for display
@@ -646,7 +644,6 @@ class ProgressDisplay {
                     'is_optimizing' => array_reduce(self::$lastKnownStats, function($carry, $item) {
                         return $carry || $item['is_optimizing'];
                     }, false),
-                    'growth_rate' => 0,
                     'size' => array_sum(array_column(self::$lastKnownStats, 'disk_bytes')),
                     'inserted' => array_sum($tablesDocs)
                 ];
@@ -665,7 +662,6 @@ class ProgressDisplay {
                     'workers' => '-',
                     'chunks' => 0,
                     'is_optimizing' => '',
-                    'growth_rate' => 0,
                     'size' => 0,
                     'inserted' => 0
                 ];
@@ -697,14 +693,16 @@ class ProgressDisplay {
         
 
             // Format and print the line
-            printf(self::$PROGRESS_FORMAT, ...$values);
-            $linesPrinted++;
+            if (!$config->get('quiet')) {
+                printf(self::$PROGRESS_FORMAT, ...$values);
+                $linesPrinted++;
 
-            // Reprint header if needed
-            if ($linesPrinted >= $linesBeforeHeader) {
-                echo "\n";
-                $printHeader();
-                $linesPrinted = 0;
+                // Reprint header if needed
+                if ($linesPrinted >= $linesBeforeHeader) {
+                    echo "\n";
+                    $printHeader();
+                    $linesPrinted = 0;
+                }
             }
             sleep(1);
         }

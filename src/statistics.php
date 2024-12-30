@@ -424,7 +424,7 @@ class LatencyHistogram {
 }
 
 class MonitoringStats {
-    // Tracks system metrics like thread count, disk usage, and growth rate
+    // Tracks system metrics like thread count and disk usage
     private $connection;          // MySQL connection to Manticore
     private $table_name;          // Table being monitored
     private $last_disk_bytes = 0; // Previous disk usage measurement
@@ -448,7 +448,7 @@ class MonitoringStats {
     }
 
     /**
-     * Retrieves current system metrics and calculates growth rate
+     * Retrieves current system metrics
      * @return array System metrics including thread count, disk usage, etc.
      */
     public function getStats() {
@@ -499,9 +499,6 @@ class MonitoringStats {
             return $sample['time'] >= $cutoff_time;
         });
 
-        // Calculate growth rate using available samples
-        $growth_rate = $this->calculateGrowthRate();
-
         $this->last_disk_bytes = $disk_bytes;
         $this->last_disk_time = $now;
         
@@ -511,38 +508,8 @@ class MonitoringStats {
             'is_optimizing' => $is_optimizing,
             'disk_bytes' => $disk_bytes,
             'ram_bytes' => $ram_bytes,
-            'indexed_documents' => $indexed_documents,
-            'growth_rate' => $growth_rate
+            'indexed_documents' => $indexed_documents
         ];
-    }
-
-    /**
-     * Calculates disk usage growth rate from collected samples
-     * @return int Growth rate in bytes per second
-     */
-    private function calculateGrowthRate() {
-        if (count($this->size_samples) < 2) {
-            return 0;
-        }
-
-        // Sort samples by time
-        usort($this->size_samples, function($a, $b) {
-            return $a['time'] <=> $b['time'];
-        });
-
-        // Get last two samples
-        $samples_count = count($this->size_samples);
-        $last = $this->size_samples[$samples_count - 1];
-        $prev = $this->size_samples[$samples_count - 2];
-
-        $bytes_delta = $last['bytes'] - $prev['bytes'];
-        $time_delta = $last['time'] - $prev['time'];
-
-        if ($time_delta <= 0 || $bytes_delta == 0) {
-            return 0;
-        }
-
-        return round($bytes_delta / $time_delta);
     }
 
     /**

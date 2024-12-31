@@ -171,6 +171,18 @@ custom      ; Threads ; Batch     ; Time        ; Total Docs  ; Docs/Sec    ; Av
 abc         ; 4       ; 1000      ; 00:15       ; 1000000     ; 64305       ; 66          ; 171         ; 171         ; 39          ; 39          ; 76.7        ; 77.5        ; 135.0       ; 245.0       ;
 ```
 
+#### Query with Delay
+
+Run queries with a 1s delay between them:
+
+```bash
+manticore-load \
+  --threads=4 \
+  --total=1000 \
+  --delay=1 \
+  --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
+```
+
 ---
 
 ## Configuration Options
@@ -197,6 +209,7 @@ abc         ; 4       ; 1000      ; 00:15       ; 1000000     ; 64305       ; 66
 | `--load`         | SQL command template for the workload               |
 | `--init`         | Initial SQL commands (e.g., `CREATE TABLE`)         |
 | `--drop`         | Drop the table before starting (applies to target table only) |
+| `--delay`        | Delay in seconds between queries (default: 0)  |
 
 ### Advanced Patterns
 

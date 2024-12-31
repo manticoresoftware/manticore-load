@@ -600,11 +600,23 @@ class ProgressDisplay {
                     'elapsed' => $currentTime - $startTime,
                     'cpu' => $anyStats['cpu'],
                     'workers' => $anyStats['workers'],
-                    'chunks' => array_sum(array_column($stats, 'disk_chunks')),
+                    'chunks' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
+                        $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                        if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
+                            return $stat['disk_chunks'];
+                        }
+                        return 0;
+                    }, array_keys($stats), $stats)),
                     'is_optimizing' => array_reduce($stats, function($carry, $item) {
                         return $carry || $item['is_optimizing'];
                     }, false),
-                    'size' => array_sum(array_column($stats, 'disk_bytes')),
+                    'size' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
+                        $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                        if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
+                            return $stat['disk_bytes'];
+                        }
+                        return 0;
+                    }, array_keys($stats), $stats)),
                     'inserted' => array_sum($tablesDocs)
                 ];
             } else if (!empty(self::$lastKnownStats)) {
@@ -640,11 +652,23 @@ class ProgressDisplay {
                     'elapsed' => $currentTime - $startTime,
                     'cpu' => $anyStats['cpu'],
                     'workers' => $anyStats['workers'],
-                    'chunks' => array_sum(array_column(self::$lastKnownStats, 'disk_chunks')),
+                    'chunks' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
+                        $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                        if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
+                            return $stat['disk_chunks'];
+                        }
+                        return 0;
+                    }, array_keys(self::$lastKnownStats), self::$lastKnownStats)),
                     'is_optimizing' => array_reduce(self::$lastKnownStats, function($carry, $item) {
                         return $carry || $item['is_optimizing'];
                     }, false),
-                    'size' => array_sum(array_column(self::$lastKnownStats, 'disk_bytes')),
+                    'size' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
+                        $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                        if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
+                            return $stat['disk_bytes'];
+                        }
+                        return 0;
+                    }, array_keys(self::$lastKnownStats), self::$lastKnownStats)),
                     'inserted' => array_sum($tablesDocs)
                 ];
             } else {

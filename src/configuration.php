@@ -240,7 +240,7 @@ class Configuration implements ArrayAccess {
      */
     private function validate() {
         foreach ($this->processes as $index => $process) {
-            $required = ['total', 'load_command'];
+            $required = ['total', 'load'];
 
             if ($this->isInsertQuery($process['load_command'] ?? null)) {
                 $required[] = 'batch-size';
@@ -490,6 +490,11 @@ class Configuration implements ArrayAccess {
         
         // For CREATE TABLE queries
         if (preg_match('/^create\s+table\s+([^\s(]+)/i', $sql, $matches)) {
+            return $matches[1];
+        }
+
+        // For SELECT queries
+        if (preg_match('/\bfrom\s+([^\s,()]+)/i', $sql, $matches)) {
             return $matches[1];
         }
                 

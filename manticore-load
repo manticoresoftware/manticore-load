@@ -151,8 +151,8 @@ function process($query, &$all_links, &$requests, &$statistics) {
                     }
                     $latency = microtime(true) - $requests[$i];
                     $statistics->addLatency($latency * 1000);
-                    $requests[$i] = microtime(true);
                     mysqli_query($link, $query, MYSQLI_ASYNC);
+                    $requests[$i] = microtime(true);
                     return true;
                 }
             };
@@ -322,7 +322,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     // Initialize MySQL connections for this process
     $all_links = [];
     $requests = [];
-    for ($i = 0; $i <= $process_config['threads']; $i++) {
+    for ($i = 0; $i < $process_config['threads']; $i++) {
         $m = mysqli_connect($config->get('host'), '', '', '', $config->get('port'));
         if (!$m) {
             throw new Exception("Cannot connect to Manticore at {$config->get('host')}:{$config->get('port')}: " . mysqli_connect_error());

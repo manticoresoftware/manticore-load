@@ -369,7 +369,7 @@ class QueryGenerator {
         if (!file_exists($this->cache_file_name)) {
             return $this->generateAndCacheQueries($quiet);
         } else {
-            if (!$quiet) ConsoleOutput::writeLine("Process {$this->process_index}: Using cached data from: {$this->cache_file_name}\n");
+            if (!$quiet) ConsoleOutput::writeLine("Process {$this->process_index}: Using cached data from: {$this->cache_file_name}");
             return $this->loadQueriesFromCache();
         }        
     }

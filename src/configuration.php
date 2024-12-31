@@ -39,6 +39,7 @@ class Configuration implements ArrayAccess {
         'help',
         'together',
         'column:',
+        'delay:',
     ];
     
     /** @var array Default configuration values */
@@ -53,7 +54,8 @@ class Configuration implements ArrayAccess {
         'quiet' => false,
         'wait' => false,
         'no-color' => false,
-        'latency-histograms' => true
+        'latency-histograms' => true,
+        'delay' => 0
     ];
 
     /** @var array Stores configurations for multiple processes */
@@ -88,7 +90,7 @@ class Configuration implements ArrayAccess {
         $process_options = [];
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
-            'iterations', 'init', 'load', 'column'
+            'iterations', 'init', 'load', 'column', 'delay'
         ];
         $index = 1;
         
@@ -333,6 +335,7 @@ class Configuration implements ArrayAccess {
             "  --latency-histograms=[0|1]   Use histogram-based latency tracking (default: 1)\n" .
             "                               1: memory-efficient but approximate percentiles\n" .
             "                               0: precise percentiles but higher memory usage\n" .
+            "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
             "                               Each section after --together can have its own process-specific\n" .
             "                               options (threads, batch-size, load, etc). Global options\n" .

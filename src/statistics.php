@@ -137,17 +137,17 @@ class Statistics {
 
     /**
      * Outputs performance statistics report
-     * @param bool $quiet Whether to use compact output format
+     * @param array $process_info Array containing process configuration and info
      */
-    public function printReport($quiet = false) {
+    public function printReport($process_info) {
         $total_time = microtime(true) - $this->start_time;
         $qps_stats = $this->calculateQpsStats();
         $latency_stats = $this->getLatencyStats();
 
-        if ($quiet) {
-            $this->printQuietReport($total_time, $qps_stats);
+        if ($process_info['quiet']) {
+            $this->printQuietReport($total_time, $qps_stats, $process_info);
         } else {
-            $this->printVerboseReport($total_time, $qps_stats, $latency_stats);
+            $this->printVerboseReport($total_time, $qps_stats, $latency_stats, $process_info);
         }
     }
 
@@ -155,13 +155,14 @@ class Statistics {
      * Prints performance statistics in compact tabular format
      * @param float $total_time Total elapsed time
      * @param array $qps_stats QPS statistics
+     * @param array $process_info Process configuration and info
      */
-    private function printQuietReport($total_time, $qps_stats) {
+    private function printQuietReport($total_time, $qps_stats, $process_info) {
         $column_name = null;
         $column_value = null;
         
-        if ($this->config && isset($this->config->getProcessConfig($this->process_index)['column'])) {
-            $parts = explode('/', $this->config->getProcessConfig($this->process_index)['column'], 2);
+        if (isset($process_info['column'])) {
+            $parts = explode('/', $process_info['column'], 2);
             if (count($parts) === 2) {
                 $column_name = $parts[0];
                 $column_value = $parts[1];
@@ -280,42 +281,48 @@ class Statistics {
      * @param float $total_time Total elapsed time
      * @param array $qps_stats QPS statistics
      * @param array $latency_stats Latency statistics
+     * @param array $process_info Process configuration and info
      */
-    private function printVerboseReport($total_time, $qps_stats, $latency_stats) {
-        echo "--------------------------------------------------------------------------------------\n";
-        if ($this->is_insert_query) {
-            echo "Write Statistics:\n";
-        } else {
-            echo "Read Statistics:\n";
+    private function printVerboseReport($total_time, $qps_stats, $latency_stats, $process_info) {
+        $output = "--------------------------------------------------------------------------------------\n";
+        $output .= "Process {$process_info['process_index']} final statistics:\n";
+
+        // Add command information
+        if (isset($process_info['init_command'])) {
+            $output .= sprintf("Init command:     %s\n", $process_info['init_command']);
         }
+        $output .= sprintf("Load command:     %s\n", $process_info['load_command']);
         
-        printf("Total time:       %s\n", ProgressDisplay::formatElapsedTime($total_time));
-        printf("Total queries:    %d\n", $this->completed_queries);
-        printf("Threads:          %d\n", $this->threads);
-        printf("Batch size:       %d\n", $this->batch_size);
+        $output .= sprintf("Total time:       %s\n", ProgressDisplay::formatElapsedTime($total_time));
+        $output .= sprintf("Total queries:    %d\n", $this->completed_queries);
+        $output .= sprintf("Threads:          %d\n", $this->threads);
+        $output .= sprintf("Batch size:       %d\n", $this->batch_size);
         
         if ($this->is_insert_query) {
-            printf("Total docs:       %d\n", $this->completed_operations);
+            $output .= sprintf("Total docs:       %d\n", $this->completed_operations);
             $total_docs_per_sec = $total_time > 0 ? round($this->completed_operations / $total_time) : 0;
-            printf("Docs per sec avg: %d\n", $total_docs_per_sec);
+            $output .= sprintf("Docs per sec avg: %d\n", $total_docs_per_sec);
             
-            printf("QPS avg:          %d\n", $qps_stats['avg']);
-            printf("QPS 1p:           %d\n", $qps_stats['p1']);
-            printf("QPS 5p:           %d\n", $qps_stats['p5']);
-            printf("QPS 95p:          %d\n", $qps_stats['p95']);
-            printf("QPS 99p:          %d\n", $qps_stats['p99']);
+            $output .= sprintf("QPS avg:          %d\n", $qps_stats['avg']);
+            $output .= sprintf("QPS 1p:           %d\n", $qps_stats['p1']);
+            $output .= sprintf("QPS 5p:           %d\n", $qps_stats['p5']);
+            $output .= sprintf("QPS 95p:          %d\n", $qps_stats['p95']);
+            $output .= sprintf("QPS 99p:          %d\n", $qps_stats['p99']);
         } else {
-            printf("QPS avg:          %d\n", $qps_stats['avg']);
-            printf("QPS 95p:          %d\n", $qps_stats['p95']);
-            printf("QPS 99p:          %d\n", $qps_stats['p99']);
+            $output .= sprintf("QPS avg:          %d\n", $qps_stats['avg']);
+            $output .= sprintf("QPS 95p:          %d\n", $qps_stats['p95']);
+            $output .= sprintf("QPS 99p:          %d\n", $qps_stats['p99']);
         }
         
-        printf("Latency avg:      %.1f ms\n", $latency_stats['avg']);
-        printf("Latency 50p:      %.1f ms\n", $latency_stats['p50']);
-        printf("Latency 95p:      %.1f ms\n", $latency_stats['p95']);
-        printf("Latency 99p:      %.1f ms\n", $latency_stats['p99']);
+        $output .= sprintf("Latency avg:      %.1f ms\n", $latency_stats['avg']);
+        $output .= sprintf("Latency 50p:      %.1f ms\n", $latency_stats['p50']);
+        $output .= sprintf("Latency 95p:      %.1f ms\n", $latency_stats['p95']);
+        $output .= sprintf("Latency 99p:      %.1f ms\n", $latency_stats['p99']);
         
-        echo "--------------------------------------------------------------------------------------\n";
+        $output .= "--------------------------------------------------------------------------------------\n";
+        
+        // Print the entire output at once atomically
+        fwrite(STDOUT, $output);
     }
 }
 

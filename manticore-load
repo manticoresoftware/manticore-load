@@ -104,33 +104,35 @@ if ($stop_shm_id === false) {
 shmop_write($stop_shm_id, "\0", 0);
 
 // This function waits for an idle mysql connection for the $query, runs it and exits
-function process($query, &$all_links, &$requests, &$statistics) {
+function process($query, &$all_links, &$requests, &$statistics, $delay) {
     global $stop_shm_id;
+
     try {
+        // initialize all connections by sending first queries
         foreach ($all_links as $k=>$link) {
             if (@$requests[$k]) continue;
             $start_time = microtime(true);
             mysqli_query($link, $query, MYSQLI_ASYNC);
-            @$requests[$k] = $start_time;
+            // Store both query start time and delay end time
+            @$requests[$k] = [
+                'start_time' => $start_time,
+                'delay_until' => $start_time + $delay, // Add configured delay
+                'readiness' => 0
+            ];
             return true;
         }
+
+        // wait until a connection is ready and run the query on it
         $last_check = microtime(true);
+    
         do {
+            $current_time = microtime(true);
+
             $links = $errors = $reject = array();
             foreach ($all_links as $link) {
                 $links[] = $errors[] = $reject[] = $link;
             }
             $count = @mysqli_poll($links, $errors, $reject, 0, 100);
-
-            // Check for stop signal every second
-            $current_time = microtime(true);
-            if ($current_time - $last_check >= 1.0) {
-                $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
-                if ($stop_requested) {
-                    return 'stop_requested';  // Special return value
-                }
-                $last_check = $current_time;
-            }
 
             if ($count > 0) {
                 foreach ($links as $j=>$link) {
@@ -138,26 +140,45 @@ function process($query, &$all_links, &$requests, &$statistics) {
                     foreach ($all_links as $i=>$link_orig) if ($all_links[$i] === $links[$j]) break;
                     if ($link->error) {
                         echo "ERROR: {$link->error}\n";
-                        if (!mysqli_ping($link)) {
-                            echo "ERROR: mysql connection is down, removing it from the pool\n";
-                            unset($all_links[$i]);
-                            unset($requests[$i]);
-                        }
                         return false;
                     }
                     if ($res === false and !$link->error) continue;
-                    if (is_object($res)) {
-                        mysqli_free_result($res);
-                    }
-                    $latency = microtime(true) - $requests[$i];
+                    if (is_object($res)) mysqli_free_result($res);
+                    $requests[$i]['readiness'] |= 1;
+                }
+            }
+
+            foreach ($all_links as $i => $link) {
+                if ($current_time >= $requests[$i]['delay_until'])  {
+                    $requests[$i]['readiness'] |= 2;
+                }
+            }
+
+            foreach ($all_links as $i => $link) {
+                if (($requests[$i]['readiness'] & 3) === 3) {
+                    $latency = $current_time - $requests[$i]['start_time'];
                     $statistics->addLatency($latency * 1000);
-                    mysqli_query($link, $query, MYSQLI_ASYNC);
-                    $requests[$i] = microtime(true);
+                    mysqli_query($all_links[$i], $query, MYSQLI_ASYNC);
+                    $requests[$i] = [
+                        'start_time' => $current_time,
+                        'delay_until' => $current_time + $delay,
+                        'readiness' => 0
+                    ];
                     return true;
                 }
-            };
+            }
+
+            // Check for stop signal every second
+            if ($current_time - $last_check >= 1.0) {
+                $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+                if ($stop_requested) {
+                    return 'stop_requested';
+                }
+                $last_check = $current_time;
+            }
+
+            usleep(100); // Sleep for 100 microseconds to prevent CPU spinning
         } while (true);
-        return true;
     } catch (Exception $e) {
         echo "ERROR while processing query \"".substr($query, 0, 20)."\": \"" . $e->getMessage() . "\"\n";
         return false;
@@ -512,8 +533,9 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $progress_updated = microtime(true);
 
     // Process each query batch
+    $delay = $process_configuration->get('delay');
     foreach ($batches as $query) {
-        $result = process($query, $all_links, $requests, $statistics);
+        $result = process($query, $all_links, $requests, $statistics, $delay);
         if ($result === 'stop_requested') {
             if (!$config->get('quiet')) {
                 ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
@@ -547,20 +569,6 @@ function run_process($process_config, $config, $process_index, $num_processes) {
                 break;
             }
         }
-    }
-
-    // Show final progress if none was shown
-    if (!$progress_shown && !$config->get('quiet')) {
-        echo "Process $process_index: ";
-        $progress->showFinalProgress(
-            $processed_batches,
-            $process_config['batch-size'],
-            $t,
-            $last_processed_batches,
-            $last_stats_time,
-            $monitoring,
-            $statistics
-        );
     }
 
     // Update the WAIT state monitoring
@@ -605,14 +613,14 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $monitoring->close();
 
     // Print final statistics
-    if (!$config->get('quiet')) {
-        echo "\nProcess $process_index Final Statistics:\n";
-        if (isset($process_config['init_command'])) {
-            echo "Init command: " . $process_config['init_command'] . "\n";
-        }
-        echo "Load command: " . $process_config['load_command'] . "\n";
-    }
-    $statistics->printReport($config->get('quiet'));
+    $process_info = [
+        'quiet' => $config->get('quiet'),
+        'init_command' => $process_config['init_command'] ?? null,
+        'load_command' => $process_config['load_command'],
+        'column' => $process_config['column'] ?? null,
+        'process_index' => $process_index
+    ];
+    $statistics->printReport($process_info);
 
     // Clean up progress display temp file
     $progress->cleanup();

@@ -306,18 +306,6 @@ class ProgressDisplay {
         return round($cpu)."%";
     }
 
-    public function showFinalProgress($processed_batches, $batch_size, $start_time, $last_processed_batches, $last_stats_time, $monitoring, $statistics) {
-        if ($this->quiet) {
-            return;
-        }
-
-        $this->start_time = $start_time;
-        $this->last_update_time = $last_stats_time;
-        $this->last_processed_batches = $last_processed_batches;
-        
-        $this->update($processed_batches, $batch_size, $monitoring, $statistics);
-    }
-
     public function saveProgress($stats) {
         // Write progress data to temp file
         $stats['pid'] = getmypid();
@@ -348,6 +336,7 @@ class ProgressDisplay {
         $linesBeforeHeader = 20;
         $linesPrinted = 0;
         $startTime = microtime(true);
+        usleep($_ENV['PROGRESS_DELAY'] * 1000000 ?? 0);
 
         // Create a mapping of PIDs to simple indices (1-based)
         $pidToIndex = array_flip(array_values($pids));
@@ -538,15 +527,26 @@ class ProgressDisplay {
                         self::$filePositions[$pid] = ftell($fh);
                         
                         // Process last line if we have one
-                        if ($lastLine !== null) {
-                            $processStats = json_decode(trim($lastLine), true);
-                            if ($processStats) {
-                                $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
-                                $table = $processConfig['table'] ?? '';
-                                $tableStats = $monitoringStats[$table] ?? reset($monitoringStats);
-                                
-                                // Merge monitoring stats with process stats
-                                $stats[$pid] = array_merge($processStats, [
+                        if ($lastLine !== null || isset(self::$lastKnownStats[$pid])) {
+                            $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
+                            $table = $processConfig['table'] ?? '';
+                            $tableStats = $monitoringStats[$table] ?? reset($monitoringStats);
+                            
+                            // Get base stats either from last line or last known stats
+                            $baseStats = null;
+                            if ($lastLine !== null) {
+                                $processStats = json_decode(trim($lastLine), true);
+                                if ($processStats) {
+                                    $baseStats = $processStats;
+                                }
+                            }
+                            if (!$baseStats && isset(self::$lastKnownStats[$pid])) {
+                                $baseStats = self::$lastKnownStats[$pid];
+                            }
+                            
+                            if ($baseStats) {
+                                // Merge monitoring stats with base stats
+                                $stats[$pid] = array_merge($baseStats, [
                                     'cpu' => sprintf("%.4s", self::getCpuUsage()),
                                     'workers' => (string)$tableStats['thread_count'],
                                     'disk_chunks' => (string)$tableStats['disk_chunks'],
@@ -556,9 +556,6 @@ class ProgressDisplay {
                                 ]);
                                 self::$lastKnownStats[$pid] = $stats[$pid];
                             }
-                        } else if (isset(self::$lastKnownStats[$pid])) {
-                            // Use last known stats if no new data
-                            $stats[$pid] = self::$lastKnownStats[$pid];
                         }
                     }
                 }

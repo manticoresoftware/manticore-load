@@ -316,7 +316,7 @@ class Configuration implements ArrayAccess {
         }
         
         die(
-            "Usage: ./manticore-load [options] [--together [options]...]\n\n" .
+            "TEST Usage: ./manticore-load [options] [--together [options]...]\n\n" .
             "Required options:\n" .
             "  --threads=N                  Number of concurrent threads (single value or comma-separated list)\n" .
             "  --total=N                    For INSERT/REPLACE: total documents to generate\n" .

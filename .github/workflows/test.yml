@@ -1,0 +1,28 @@
+name: tests
+
+on:
+    push:
+      branches: [ main ]
+    pull_request:
+      branches: [ main ]
+  
+
+jobs:
+   
+    clt:
+        name: CLT tests
+        runs-on: ubuntu-22.04
+        steps:
+          - name: Checkout
+            uses: actions/checkout@v4
+          - name: Prepare manticore-loadDocker image
+            run: |
+              ls -la
+              cd test
+              ./build.sh
+          - name: Run CLT tests
+            uses: manticoresoftware/clt@0.2.3
+            with:
+              image: manticore-load
+              test_prefix: test/clt-tests/
+              run_args: --privileged

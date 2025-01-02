@@ -219,6 +219,7 @@ foreach ($processes as $process_index => $process_config) {
         $child_pids[$pid] = $process_index;
         continue;
     } else {
+        if ($process_index === 1) usleep($_ENV['PROCESS_1_DELAY'] * 1000000 ?? 0);
         // Child process
         try {
             // Iterate through all combinations of threads and batch sizes
@@ -288,7 +289,7 @@ if ($parent_pid === getmypid()) {
             break;
         }
 
-        usleep(1000000);  // Sleep for 1ms
+        usleep(100);  // Sleep for 100us
         pcntl_signal_dispatch();
     }
     
@@ -520,7 +521,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         if ($start_signal === 1) {
             break;
         }
-        usleep(1000000);  // Sleep for 1ms
+        usleep(100);  // Sleep for 100us
         pcntl_signal_dispatch();  // Allow CTRL-C handling while waiting
     }
 

@@ -336,7 +336,7 @@ class ProgressDisplay {
         $linesBeforeHeader = 20;
         $linesPrinted = 0;
         $startTime = microtime(true);
-        usleep($_ENV['PROGRESS_DELAY'] * 1000000 ?? 0);
+        usleep(($_ENV['PROGRESS_DELAY'] ?? 0) * 1000000);
 
         // Create a mapping of PIDs to simple indices (1-based)
         $pidToIndex = array_flip(array_values($pids));

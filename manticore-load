@@ -219,7 +219,7 @@ foreach ($processes as $process_index => $process_config) {
         $child_pids[$pid] = $process_index;
         continue;
     } else {
-        if ($process_index === 1) usleep($_ENV['PROCESS_1_DELAY'] * 1000000 ?? 0);
+        if ($process_index === 1) usleep(($_ENV['PROCESS_1_DELAY'] ?? 0) * 1000000);
         // Child process
         try {
             // Iterate through all combinations of threads and batch sizes

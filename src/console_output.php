@@ -44,7 +44,7 @@ class ConsoleOutput {
      * @param string $message The message to write to console
      * @return void
      */
-    private static function write($message) {
+    public static function write($message) {
         if (self::$semaphore === null) {
             self::init();
         }

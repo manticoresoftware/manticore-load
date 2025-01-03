@@ -1,0 +1,13 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+./manticore-load --help|head -1
+––– output –––
+Usage: ./manticore-load [options] [--together [options]...]

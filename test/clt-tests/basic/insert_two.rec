@@ -1,0 +1,74 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+PROCESS_1_DELAY=0.5 PROGRESS_DELAY=0.5 ./manticore-load --drop --init="create table t" --total=10 --load="insert into t values(<increment>)" --threads=1 --delay=1 --together --drop --init="create table t2" --total=10 --load="insert into t2 values(<increment>)" --threads=1 --delay=0.5
+––– output –––
+======================================================================================
+Process 2: Running with threads=1, batch-size=1
+Process 2: Dropping table: DROP TABLE IF EXISTS t2
+Process 2: Executing init command: create table t2
+Process 2: Generating new data cache /tmp/manticore_load_#!/[a-z0-9]+/!# ... 100%
+======================================================================================
+Process 1: Running with threads=1, batch-size=1
+Process 1: Dropping table: DROP TABLE IF EXISTS t
+Process 1: Executing init command: create table t
+Process 1: Generating new data cache /tmp/manticore_load_#!/[a-z0-9]+/!# ... 100%
+-------------------------------------------------------------------------------------------------------------------------------------------
+Time      Elapsed   1:Progress  2:Progress  1:QPS    2:QPS    1:DPS    2:DPS    CPU     Workers    Chunks    Merging   Disk        Inserted
+-------------------------------------------------------------------------------------------------------------------------------------------
+%{TIME}  #!/\d+/!#ms     -           -           -        -        -        -        N/A     -          0                   0B          0
+%{TIME}  1.#!/\d/!#s      #!/\d/!#0%         #!/\d/!#0%         #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/(\d+%|N\/A)/!##!/\s+/!##!/\d/!#          0                   930B        6
+%{TIME}  2.#!/\d/!#s      #!/\d/!#0%         #!/\d/!#0%         #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/(\d+%|N\/A)/!##!/\s+/!##!/\d/!#          0                   930B        9
+%{TIME}  3.#!/\d/!#s      #!/\d/!#0%         #!/\d/!#0%         #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/\d/!#        #!/(\d+%|N\/A)/!##!/\s+/!##!/\d/!#          0                   930B        12
+--------------------------------------------------------------------------------------
+Process 2 final statistics:
+Init command:     create table t2
+Load command:     insert into t2 values(<increment>)
+Total time:       #!/(4|5)\.\d/!#s
+Total queries:    10
+Threads:          1
+Batch size:       1
+Total docs:       10
+Docs per sec avg: 2
+QPS avg:          2
+QPS 1p:           2
+QPS 5p:           2
+QPS 95p:          #!/\d/!#
+QPS 99p:          #!/\d/!#
+Latency avg:      50#!/\d/!#.#!/\d/!# ms
+Latency 50p:      505.#!/\d/!# ms
+Latency 95p:      505.#!/\d/!# ms
+Latency 99p:      505.#!/\d/!# ms
+--------------------------------------------------------------------------------------
+%{TIME}  4.#!/\d/!#s      #!/\d/!#0%         -           #!/\d/!#        -        #!/\d/!#        -        #!/(\d+%|N\/A)/!##!/\s+/!#1          0                   465B        5
+%{TIME}  5.#!/\d/!#s      #!/\d/!#0%         -           #!/\d/!#        -        #!/\d/!#        -        #!/(\d+%|N\/A)/!##!/\s+/!#1          0                   465B        6
+%{TIME}  6.#!/\d/!#s      #!/\d/!#0%         -           #!/\d/!#        -        #!/\d/!#        -        #!/(\d+%|N\/A)/!##!/\s+/!#1          0                   465B        7
+%{TIME}  7.#!/\d/!#s      #!/\d/!#0%         -           #!/\d/!#        -        #!/\d/!#        -        #!/(\d+%|N\/A)/!##!/\s+/!#1          0                   465B        8
+%{TIME}  8.#!/\d/!#s      #!/\d/!#0%         -           #!/\d/!#        -        #!/\d/!#        -        #!/(\d+%|N\/A)/!##!/\s+/!#1          0                   465B        9
+--------------------------------------------------------------------------------------
+Process 1 final statistics:
+Init command:     create table t
+Load command:     insert into t values(<increment>)
+Total time:       9.#!/\d/!#s
+Total queries:    10
+Threads:          1
+Batch size:       1
+Total docs:       10
+Docs per sec avg: 1
+QPS avg:          1
+QPS 1p:           1
+QPS 5p:           1
+QPS 95p:          #!/\d/!#
+QPS 99p:          #!/\d/!#
+Latency avg:      100#!/\d/!#.#!/\d/!# ms
+Latency 50p:      1050.#!/\d/!# ms
+Latency 95p:      1050.#!/\d/!# ms
+Latency 99p:      1050.#!/\d/!# ms
+--------------------------------------------------------------------------------------

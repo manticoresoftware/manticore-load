@@ -21,6 +21,17 @@ class QueryGenerator {
     private static $words_count = null;
     private $process_index;
     private $stop_shm_id;
+    private static $supported_pattern_types = [
+        'increment',
+        'string',
+        'text',
+        'int',
+        'float',
+        'boolean',
+        'array',
+        'array_float',
+        'bigint'
+    ];
 
     /**
      * Constructor initializes the query generator with configuration and shared memory
@@ -188,7 +199,7 @@ class QueryGenerator {
         $type = $parts[0];
         
         // If it's not a known type, treat it as an exact value
-        if (!in_array($type, ['increment', 'string', 'text', 'int', 'float', 'boolean', 'array', 'array_float'])) {
+        if (!in_array($type, self::$supported_pattern_types)) {
             return [
                 'type' => 'exact',
                 'value' => $pattern
@@ -320,7 +331,7 @@ class QueryGenerator {
                             $pattern['decimals'] ?? 1);
                 
             case 'boolean':
-                return rand(0, 1) ? 'true' : 'false';
+                return rand(0, 1);
                 
             case 'array':
                 $size = rand($pattern['min_size'], $pattern['max_size']);
@@ -490,7 +501,10 @@ class QueryGenerator {
      */
     private function parseLoadCommand($command) {
         $patterns = [];
-        if (preg_match_all('/<([^>]+)>/', $command, $matches)) {
+        
+        // Create regex that matches only known pattern types
+        $types_regex = implode('|', self::$supported_pattern_types);
+        if (preg_match_all('/<((' . $types_regex . ')[^>]*)>/', $command, $matches)) {
             foreach ($matches[1] as $match) {
                 $patterns[$match] = self::parsePattern($match);
             }

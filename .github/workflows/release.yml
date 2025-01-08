@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - '*'
+  workflow_run:
+    workflows: [ Test ]
+    types: [ completed ]
+    branches: [ main ]
 
 env:
   APP_NAME: 'manticore-load'
@@ -11,7 +12,32 @@ env:
   DESC: 'Manticore Load Emulator'
 
 jobs:
+  update-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      has_tag: ${{ steps.check-tag.outputs.has_tag }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: semver-tagger
+        uses: manticoresoftware/semver-tagger-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check version tag
+        id: check-tag
+        run: |
+          if git tag --points-at HEAD | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' > /dev/null; then
+            echo "has_tag=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_tag=false" >> $GITHUB_OUTPUT
+          fi
+
   vars:
+    needs: update-version
+    if: needs.update-version.outputs.has_tag == 'true'
     runs-on: ubuntu-22.04
     outputs:
       app_version: ${{ steps.vars.outputs.app_version }}

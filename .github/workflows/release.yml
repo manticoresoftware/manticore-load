@@ -4,7 +4,9 @@ on:
   push:
     tags:
     - '*.*.*'
-
+    branches:
+    - main
+    
 env:
   APP_NAME: 'manticore-load'
   MAINTAINER: 'Manticore'

@@ -3,9 +3,7 @@ name: Release
 on:
   push:
     tags:
-    - '*.*.*'
-    branches:
-    - main
+      - '[0-9]+.[0-9]+.[0-9]+'
 
 env:
   APP_NAME: 'manticore-load'

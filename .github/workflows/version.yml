@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  test:
+  update-version:
     runs-on: ubuntu-24.04
     permissions:
       contents: write

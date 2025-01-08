@@ -6,7 +6,7 @@ on:
     - '*.*.*'
     branches:
     - main
-    
+
 env:
   APP_NAME: 'manticore-load'
   MAINTAINER: 'Manticore'
@@ -28,7 +28,7 @@ jobs:
         run: |
           # Get version from git tag
           if ! version=$(git describe --tags --exact-match --match '[0-9]*.[0-9]*.[0-9]*' 2>/dev/null); then
-            echo "Error: Current commit must be tagged with version in format x.y.z"
+            echo "Error: Current commit must be tagged with version in format x.y.z. The actual tag is $version"
             exit 1
           fi
           

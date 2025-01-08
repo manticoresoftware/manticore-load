@@ -1,0 +1,19 @@
+name: Update version
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: manticoresoftware/semver-tagger-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}

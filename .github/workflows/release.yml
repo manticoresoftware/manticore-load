@@ -1,16 +1,30 @@
-name: release
+name: Release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_run:
+    workflows: ["Test"]
+    types:
+      - completed
+    branches:
+      - main
 
 env:
   APP_NAME: 'manticore-load'
   MAINTAINER: 'Manticore'
   DESC: 'Manticore Load Emulator'
+
 jobs:
+  check-workflow:
+    runs-on: ubuntu-22.04
+    if: |
+      github.event.workflow_run.conclusion == 'success' && 
+      contains(github.ref, 'refs/tags/') && 
+      matches(github.ref, '^refs/tags/[0-9]+\.[0-9]+\.[0-9]+$')
+    steps:
+      - run: echo "Previous workflow was successful and this is a version tag"
+
   vars:
+    needs: [check-workflow]
     runs-on: ubuntu-22.04
     outputs:
       app_version: ${{ steps.vars.outputs.app_version }}
@@ -23,11 +37,26 @@ jobs:
       - uses: actions/checkout@v4
       - id: vars
         run: |
-          version=$(<APP_VERSION)
+          # Get version from git tag
+          if ! version=$(git describe --tags --exact-match --match '[0-9]*.[0-9]*.[0-9]*' 2>/dev/null); then
+            echo "Error: Current commit must be tagged with version in format x.y.z"
+            exit 1
+          fi
+          
+          # Check if commit has 'release' tag
+          if git describe --tags --exact-match --match 'release' >/dev/null 2>&1; then
+            version="${version}"
+            target="release"
+          else
+            version="${version}+dev"
+            target="dev"
+          fi
+          
           date=$( date +%y%m%d%H )
           commit=${GITHUB_SHA:0:7}
 
           echo "app_version=$version" >> $GITHUB_OUTPUT
+          echo "target=$target" >> $GITHUB_OUTPUT
           echo "app_date=$date" >> $GITHUB_OUTPUT
           echo "app_commit=$commit" >> $GITHUB_OUTPUT
           echo "rpm_suffix=_${date}.$commit" >> $GITHUB_OUTPUT
@@ -153,9 +182,12 @@ jobs:
 
   deploy:
     needs:
+      - vars
       - build-artifact
       - build-linux-packages
     runs-on: ubuntu-22.04
+    env:
+      target: ${{ needs.vars.outputs.target }}
     strategy:
       matrix:
         include:
@@ -219,6 +251,7 @@ jobs:
           artifact: ${{ matrix.artifact }}
           type: ${{ matrix.type }}
           delimiter: ${{ matrix.delimiter }}
+          target: ${{ env.target }}
 
   update-manticoresearch-deps:
     needs:

@@ -45,6 +45,7 @@ jobs:
       app_commit: ${{ steps.vars.outputs.app_commit }}
       rpm_suffix: ${{ steps.vars.outputs.rpm_suffix }}
       deb_suffix: ${{ steps.vars.outputs.deb_suffix }}
+      target: ${{ steps.vars.outputs.target }}
 
     steps:
       - uses: actions/checkout@v4

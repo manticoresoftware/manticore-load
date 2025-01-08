@@ -117,7 +117,7 @@ jobs:
           cp -r ${{ env.APP_NAME }} .debpkg/usr/bin/${{ env.APP_NAME }}
           cp -r ${{ env.APP_NAME }} .rpmpkg/usr/bin/${{ env.APP_NAME }}
           cp -p LICENSE .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/LICENSE
-          cp -p APP_VERSION .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/APP_VERSION
+          echo "${{ needs.vars.outputs.app_version }}" > .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/APP_VERSION
           cp -p README.md .rpmpkg/usr/share/manticore/modules/${{ env.APP_NAME }}/README.md
           sudo chown -R root:root .debpkg
           sudo chown -R root:root .rpmpkg

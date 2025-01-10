@@ -489,6 +489,7 @@ class MonitoringStats {
                 }
             }
         } catch (mysqli_sql_exception $e) {
+            // TODO: when the table is distributed (in case of sharding), SHOW TABLE STATUS 
             throw new Exception("ERROR querying status: " . $e->getMessage());
         }
 

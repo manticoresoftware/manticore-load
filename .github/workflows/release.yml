@@ -140,7 +140,7 @@ jobs:
       - name: Rename packages to proper name
         run: |
           ls -la ./*.rpm
-          version=${{ needs.vars.outputs.app_version }}
+          version=$(echo "${{ needs.vars.outputs.app_version }}" | tr '-' '.')
           rpm_path="./${{ env.APP_NAME }}-${version}-1.noarch.rpm"
           cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el7.noarch.rpm"
           cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el8.noarch.rpm"

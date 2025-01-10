@@ -71,7 +71,7 @@ class Configuration implements ArrayAccess {
     public function __construct($argv = null) {
         // Get basename of the script name to handle both 'manticore-load' and './manticore-load'
         if (count($argv) === 1 and basename($argv[0]) === 'manticore-load') {
-            fwrite(STDERR, "Usage: manticore-load [options] [--together [options]...]\n");
+            fwrite(STDERR, "Usage: manticore-load [--help] [options] [--together [options]...]\n");
             exit(1);
         }
 

@@ -14,7 +14,7 @@ jobs:
         steps:
           - name: Checkout
             uses: actions/checkout@v4
-          - name: Prepare manticore-loadDocker image
+          - name: Prepare manticore-load Docker image
             run: |
               cd test
               ./build.sh
@@ -31,7 +31,7 @@ jobs:
         steps:
           - name: Checkout
             uses: actions/checkout@v4
-          - name: Prepare manticore-loadDocker image
+          - name: Prepare manticore-load Docker image
             run: |
               cd test
               ./build.sh

@@ -5,7 +5,10 @@ on:
     workflows: [ Test ]
     types: [ completed ]
     branches: [ main ]
-
+  push:
+    tags:
+      - 'release*'
+    
 env:
   APP_NAME: 'manticore-load'
   MAINTAINER: 'Manticore'

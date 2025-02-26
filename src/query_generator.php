@@ -38,6 +38,9 @@ class QueryGenerator {
      * @param Configuration $config Configuration object containing process settings
      */
     public function __construct(Configuration $config, $main_script_path) {
+        // Set fixed seed for random number generation
+        srand(42); // Using constant value 42 as seed
+        
         $this->config = $config;
         $this->process_index = $config->get('process_index');
         $this->load_info = $this->parseLoadCommand($config->get('load_command'));

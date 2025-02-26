@@ -63,6 +63,7 @@ jobs:
           mkdir -p build/${{ env.APP_NAME }}
           cp ${{ env.APP_NAME }} build/${{ env.APP_NAME }}/${{ env.APP_NAME }}
           cp -r src build/${{ env.APP_NAME }}/
+          echo "${{ needs.vars.outputs.app_version }}" > build/${{ env.APP_NAME }}/APP_VERSION
           cd build
           tar -czf "$name.tar.gz" ${{ env.APP_NAME }}
           zip -r "$name.zip" ${{ env.APP_NAME }}  

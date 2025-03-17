@@ -75,24 +75,16 @@ class QueryGenerator {
      * Generates random text with proper sentence structure and punctuation
      * @param int $minWords Minimum number of words
      * @param int $maxWords Maximum number of words
+     * @param string|null $filePath Optional path to file to source words from (if null, uses internal word list)
      * @return string Generated text
      */
-    public static function generateRandomText($minWords, $maxWords) {
+    public static function generateRandomText($minWords, $maxWords, $filePath = null) {
         static $punctuation = array('.', '!', '?', ',', ';');
         
         // Initialize word list only once
         if (self::$words === null) {
-            // If minWords is actually a file path (from parsePattern)
-            if (is_string($minWords) && file_exists($minWords)) {
-                $content = file_get_contents($minWords);
-                if ($content === false) {
-                    throw new Exception("Cannot read file: $minWords");
-                }
-                // Split content by spaces and punctuation
-                self::$words = preg_split('/[\s\.,;:!?\(\)\[\]{}"\'\-]+/', $content, -1, PREG_SPLIT_NO_EMPTY);
-                if (empty(self::$words)) {
-                    throw new Exception("No words found in file: $minWords");
-                }
+            if ($filePath !== null) {
+                self::loadWordsFromFile($filePath);
             } else {
                 self::$words = array(
                     'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
@@ -140,12 +132,8 @@ class QueryGenerator {
             }
         }
         
-        // If minWords is a file path, use random length between 20-300 words
-        if (is_string($minWords) && file_exists($minWords)) {
-            $numWords = rand(20, 300);
-        } else {
-            $numWords = rand($minWords, $maxWords);
-        }
+        // Generate random number of words within the specified range
+        $numWords = rand($minWords, $maxWords);
         
         $text = array();
         if (self::$words_count === null) {
@@ -322,7 +310,8 @@ class QueryGenerator {
             case 'text':
                 return self::generateRandomText(
                     $pattern['min_words'] ?? 20,
-                    $pattern['max_words'] ?? 300
+                    $pattern['max_words'] ?? 300,
+                    $pattern['file_path'] ?? null
                 );
                 
             case 'int':
@@ -520,5 +509,28 @@ class QueryGenerator {
             'patterns' => $patterns,
             'is_batch_compatible' => $is_insert
         ];
+    }
+
+    /**
+     * Loads words from a file for text generation
+     * @param string $filePath Path to the file containing words
+     * @return void
+     * @throws Exception If file cannot be read or contains no words
+     */
+    private static function loadWordsFromFile($filePath) {
+        if (!file_exists($filePath)) {
+            throw new Exception("File not found: $filePath");
+        }
+        
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            throw new Exception("Cannot read file: $filePath");
+        }
+        
+        // Split content by spaces and punctuation
+        self::$words = preg_split('/[\s\.,;:!?\(\)\[\]{}"\'\-]+/', $content, -1, PREG_SPLIT_NO_EMPTY);
+        if (empty(self::$words)) {
+            throw new Exception("No words found in file: $filePath");
+        }
     }
 }

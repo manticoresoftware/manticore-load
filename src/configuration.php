@@ -33,6 +33,7 @@ class Configuration implements ArrayAccess {
         'iterations:',
         'verbose',
         'quiet',
+        'json',
         'wait',
         'no-color',
         'latency-histograms::',
@@ -52,6 +53,7 @@ class Configuration implements ArrayAccess {
         'drop' => false,
         'verbose' => false,
         'quiet' => false,
+        'json' => false,
         'wait' => false,
         'no-color' => false,
         'latency-histograms' => true,
@@ -349,6 +351,7 @@ class Configuration implements ArrayAccess {
             "  --help                       Show this help message\n" .
             "  --column=NAME/VALUE           Add custom column in quiet mode output\n" .
             "                               Format: --column=name/value (e.g., batch/1000)\n" .
+            "  --json                       Output statistics in JSON format (requires --quiet)\n" .
             
             "\nPattern formats in load command:\n" .
             "  value                        Exact value to use\n" .

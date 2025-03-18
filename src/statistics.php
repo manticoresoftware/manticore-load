@@ -145,10 +145,66 @@ class Statistics {
         $latency_stats = $this->getLatencyStats();
 
         if ($process_info['quiet']) {
-            $this->printQuietReport($total_time, $qps_stats, $process_info);
+            if ($process_info['json']) {
+                $this->printJsonReport($total_time, $qps_stats, $process_info);
+            } else {
+                $this->printQuietReport($total_time, $qps_stats, $process_info);
+            }
         } else {
+            if ($process_info['json']) {
+                die("ERROR: --json option can only be used with --quiet\n");
+            }
             $this->printVerboseReport($total_time, $qps_stats, $latency_stats, $process_info);
         }
+    }
+
+    /**
+     * Prints performance statistics in JSON format
+     * @param float $total_time Total elapsed time
+     * @param array $qps_stats QPS statistics
+     * @param array $process_info Process configuration and info
+     */
+    private function printJsonReport($total_time, $qps_stats, $process_info) {
+        $column_name = null;
+        $column_value = null;
+        
+        if (isset($process_info['column'])) {
+            $parts = explode('/', $process_info['column'], 2);
+            if (count($parts) === 2) {
+                $column_name = $parts[0];
+                $column_value = $parts[1];
+            }
+        }
+
+        $data = [
+            'threads' => $this->threads,
+            'batch_size' => $this->batch_size,
+            'time' => sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
+            'total_operations' => $this->completed_operations,
+            'operations_per_second' => $total_time > 0 ? round($this->completed_operations / $total_time) : 0,
+            'qps' => [
+                'avg' => $qps_stats['avg'],
+                'p99' => $qps_stats['p99'],
+                'p95' => $qps_stats['p95'],
+                'p5' => $qps_stats['p5'],
+                'p1' => $qps_stats['p1']
+            ],
+            'latency' => [
+                'avg' => round($this->getLatencyStats()['avg'], 1),
+                'p50' => round($this->getLatencyStats()['p50'], 1),
+                'p95' => round($this->getLatencyStats()['p95'], 1),
+                'p99' => round($this->getLatencyStats()['p99'], 1)
+            ]
+        ];
+
+        if ($column_name && $column_value) {
+            $data['custom_column'] = [
+                'name' => $column_name,
+                'value' => $column_value
+            ];
+        }
+
+        echo json_encode($data, JSON_PRETTY_PRINT) . "\n";
     }
 
     /**

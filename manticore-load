@@ -616,6 +616,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     // Print final statistics
     $process_info = [
         'quiet' => $config->get('quiet'),
+        'json' => $config->get('json'),
         'init_command' => $process_config['init_command'] ?? null,
         'load_command' => $process_config['load_command'],
         'column' => $process_config['column'] ?? null,

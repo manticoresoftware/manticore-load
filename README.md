@@ -183,6 +183,49 @@ manticore-load \
   --load="SELECT * FROM test WHERE MATCH('<text/1/2>')"
 ```
 
+#### Quiet Mode with JSON Output
+
+Run load test with JSON output format:
+
+```bash
+manticore-load \
+  --quiet \
+  --json \
+  --batch-size=1000 \
+  --threads=4 \
+  --total=1000000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
+  --load="INSERT INTO test(id,name) VALUES(<increment>,'<text/10/100>')"
+```
+
+This will output statistics in JSON format:
+
+```json
+{
+    "threads": 4,
+    "batch_size": 1000,
+    "time": "00:15",
+    "total_operations": 1000000,
+    "operations_per_second": 64305,
+    "qps": {
+        "avg": 66,
+        "p99": 171,
+        "p95": 171,
+        "p5": 39,
+        "p1": 39
+    },
+    "latency": {
+        "avg": 76.7,
+        "p50": 77.5,
+        "p95": 135.0,
+        "p99": 245.0
+    }
+}
+```
+
+Note: The `--json` option can only be used with `--quiet`. If used without `--quiet`, an error will be shown.
+
 ---
 
 ## Configuration Options
@@ -197,6 +240,7 @@ manticore-load \
 | `--verbose`   | Show detailed progress and queries     |
 | `--no-color`  | Disable terminal colorization          |
 | `--column`    | Add custom column in quiet mode output (format: name/value) |
+| `--json`      | Output statistics in JSON format (requires --quiet) |
 
 ### Workload-Specific Options
 

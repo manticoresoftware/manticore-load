@@ -478,10 +478,28 @@ class QueryGenerator {
      */
     private function generateSingleQuery() {
         $query = $this->load_info['command'];
-        foreach ($this->load_info['patterns'] as $pattern_text => $pattern) {
+        
+        // Sort pattern occurrences by offset in descending order to avoid offset issues when replacing
+        $occurrences = $this->load_info['pattern_occurrences'];
+        usort($occurrences, function($a, $b) {
+            return $b['offset'] - $a['offset'];
+        });
+        
+        // Replace each pattern occurrence with a unique value
+        foreach ($occurrences as $occurrence) {
+            $pattern_text = $occurrence['text'];
+            $pattern = $this->load_info['patterns'][$pattern_text];
             $value = $this->generateValue($pattern);
-            $query = str_replace("<$pattern_text>", $value, $query);
+            
+            // Replace the pattern at the specific position
+            $query = substr_replace(
+                $query, 
+                $value, 
+                $occurrence['offset'] - 1, // -1 for the < character
+                $occurrence['length']
+            );
         }
+        
         rtrim($query, ';');
         return $query;
     }
@@ -493,12 +511,26 @@ class QueryGenerator {
      */
     private function parseLoadCommand($command) {
         $patterns = [];
+        $pattern_occurrences = [];
         
         // Create regex that matches only known pattern types
         $types_regex = implode('|', self::$supported_pattern_types);
-        if (preg_match_all('/<((' . $types_regex . ')[^>]*)>/', $command, $matches)) {
-            foreach ($matches[1] as $match) {
-                $patterns[$match] = self::parsePattern($match);
+        if (preg_match_all('/<((' . $types_regex . ')[^>]*)>/', $command, $matches, PREG_OFFSET_CAPTURE)) {
+            foreach ($matches[1] as $index => $match) {
+                $pattern_text = $match[0];
+                $offset = $match[1];
+                
+                // Store the pattern definition
+                if (!isset($patterns[$pattern_text])) {
+                    $patterns[$pattern_text] = self::parsePattern($pattern_text);
+                }
+                
+                // Store the occurrence position
+                $pattern_occurrences[] = [
+                    'text' => $pattern_text,
+                    'offset' => $offset,
+                    'length' => strlen($pattern_text) + 2 // +2 for < and >
+                ];
             }
         }
 
@@ -507,6 +539,7 @@ class QueryGenerator {
         return [
             'command' => $command,
             'patterns' => $patterns,
+            'pattern_occurrences' => $pattern_occurrences,
             'is_batch_compatible' => $is_insert
         ];
     }

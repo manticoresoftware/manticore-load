@@ -157,9 +157,11 @@ class QueryGenerator {
         }
         
         // Ensure text ends with a period
-        $lastWord = &$text[count($text) - 1];
-        if (!in_array(substr($lastWord, -1), $punctuation)) {
-            $lastWord .= '.';
+        if (!empty($text)) {
+            $lastWord = &$text[count($text) - 1];
+            if (!in_array(substr($lastWord, -1), $punctuation)) {
+                $lastWord .= '.';
+            }
         }
         
         return implode(' ', $text);

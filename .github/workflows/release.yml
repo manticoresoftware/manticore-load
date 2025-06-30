@@ -153,7 +153,8 @@ jobs:
           rpm_path="./${{ env.APP_NAME }}-${version}-1.noarch.rpm"
           cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el7.noarch.rpm"
           cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el8.noarch.rpm"
-          mv $rpm_path "./${{ env.APP_NAME }}-${version}-1.el9.noarch.rpm"
+          cp $rpm_path "./${{ env.APP_NAME }}-${version}-1.el9.noarch.rpm"
+          mv $rpm_path "./${{ env.APP_NAME }}-${version}-1.el10.noarch.rpm"
 
           ls -la ./*.deb
 
@@ -176,6 +177,11 @@ jobs:
         with:
           name: artifact-el9-rpm
           path: ./*.el9.noarch.rpm
+
+      - uses: manticoresoftware/upload_artifact_with_retries@main
+        with:
+          name: artifact-el10-rpm
+          path: ./*.el10.noarch.rpm
 
   deploy:
     needs:
@@ -233,6 +239,11 @@ jobs:
             arch: noarch
             delimiter: "_"
             distro: 9
+          - artifact: artifact-el10-rpm
+            type: rpm
+            arch: noarch
+            delimiter: "_"
+            distro: 10
           - artifact: artifact
             type: arc
             arch: noarch

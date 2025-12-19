@@ -33,6 +33,7 @@ class Configuration implements ArrayAccess {
         'total:',
         'iterations:',
         'cache-gen-workers:',
+        'cache-from-disk',
         'verbose',
         'quiet',
         'json',
@@ -60,6 +61,7 @@ class Configuration implements ArrayAccess {
         'no-color' => false,
         'latency-histograms' => true,
         'cache-gen-workers' => 1,
+        'cache-from-disk' => false,
         'delay' => 0
     ];
 
@@ -101,7 +103,8 @@ class Configuration implements ArrayAccess {
         $process_options = [];
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
-            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers'
+            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
+            'cache-from-disk'
         ];
         $index = 1;
         
@@ -408,6 +411,7 @@ class Configuration implements ArrayAccess {
             "                               0: precise percentiles but higher memory usage\n" .
             "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
             "                               (default: 1)\n" .
+            "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
             "                               Each section after --together can have its own process-specific\n" .

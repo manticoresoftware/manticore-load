@@ -13,6 +13,135 @@ Source code available at: https://github.com/manticoresoftware/manticore-load
  * Class QueryGenerator
  * Generates SQL queries based on patterns and caches them for reuse
  */
+class CacheFileBatches implements IteratorAggregate, Countable {
+    private $path;
+    private $line_count;
+    private $warmup_enabled;
+
+    public function __construct($path, $warmup_enabled = true, $line_count = null) {
+        $this->path = $path;
+        $this->warmup_enabled = $warmup_enabled;
+        $this->line_count = $line_count;
+    }
+
+    public function count(): int {
+        if ($this->line_count === null) {
+            $this->line_count = $this->countLinesAndWarm();
+        } elseif ($this->warmup_enabled) {
+            $this->warmupCacheFile();
+        }
+        return $this->line_count;
+    }
+
+    public function getIterator(): Traversable {
+        $fh = fopen($this->path, 'r');
+        if (!$fh) {
+            throw new Exception("Error: Cannot read cache file");
+        }
+        try {
+            while (($line = fgets($fh)) !== false) {
+                $line = rtrim($line, "\r\n");
+                if ($line === '') {
+                    continue;
+                }
+                yield $line;
+            }
+        } finally {
+            fclose($fh);
+        }
+    }
+
+    public function preview($limit = 3): array {
+        $fh = fopen($this->path, 'r');
+        if (!$fh) {
+            throw new Exception("Error: Cannot read cache file");
+        }
+        $queries = $this->cache_from_disk ? null : [];
+        try {
+            while (count($queries) < $limit && ($line = fgets($fh)) !== false) {
+                $line = rtrim($line, "\r\n");
+                if ($line === '') {
+                    continue;
+                }
+                $queries[] = $line;
+            }
+        } finally {
+            fclose($fh);
+        }
+        return $queries;
+    }
+
+    private function countLinesAndWarm(): int {
+        $fh = fopen($this->path, 'r');
+        if (!$fh) {
+            throw new Exception("Error: Cannot read cache file");
+        }
+        $count = 0;
+        try {
+            while (($line = fgets($fh)) !== false) {
+                $line = rtrim($line, "\r\n");
+                if ($line === '') {
+                    continue;
+                }
+                $count++;
+            }
+        } finally {
+            fclose($fh);
+        }
+        return $count;
+    }
+
+    private function warmupCacheFile(): void {
+        $fh = fopen($this->path, 'r');
+        if (!$fh) {
+            throw new Exception("Error: Cannot read cache file");
+        }
+        try {
+            while (!feof($fh)) {
+                fread($fh, 1024 * 1024);
+            }
+        } finally {
+            fclose($fh);
+        }
+    }
+}
+
+class RepeatingBatches implements IteratorAggregate, Countable {
+    private $batches;
+    private $iterations;
+
+    public function __construct($batches, $iterations) {
+        $this->batches = $batches;
+        $this->iterations = $iterations;
+    }
+
+    public function count(): int {
+        return count($this->batches) * $this->iterations;
+    }
+
+    public function getIterator(): Traversable {
+        for ($i = 0; $i < $this->iterations; $i++) {
+            foreach ($this->batches as $query) {
+                yield $query;
+            }
+        }
+    }
+
+    public function preview($limit = 3): array {
+        if (method_exists($this->batches, 'preview')) {
+            return $this->batches->preview($limit);
+        }
+        $queries = $this->cache_from_disk ? null : [];
+        foreach ($this->batches as $query) {
+            $queries[] = $query;
+            if (count($queries) >= $limit) {
+                break;
+            }
+        }
+        return $queries;
+    }
+}
+
 class QueryGenerator {
     private $config;
     private $cache_file_name;
@@ -25,6 +154,7 @@ class QueryGenerator {
     private static $words_count = null;
     private $process_index;
     private $stop_shm_id;
+    private $cache_from_disk = false;
     private static $supported_pattern_types = [
         'increment',
         'string',
@@ -60,6 +190,7 @@ class QueryGenerator {
             $weight = 1.0 / count($this->load_commands);
             $this->load_distribution = array_fill(0, count($this->load_commands), $weight);
         }
+        $this->cache_from_disk = (bool)$config->get('cache-from-disk');
         $this->is_tty = function_exists('posix_isatty') ? posix_isatty(STDOUT) : true;
         $this->cache_file_name = $this->generateCacheFileName();
         
@@ -406,11 +537,57 @@ class QueryGenerator {
      * @throws Exception If cache file cannot be read
      */
     private function loadQueriesFromCache() {
+        if ($this->cache_from_disk) {
+            return new CacheFileBatches($this->cache_file_name, true);
+        }
+        $this->warnIfCacheLikelyTooLarge();
         $batches = file($this->cache_file_name, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if ($batches === false) {
             throw new Exception("Error: Cannot read cache file");
         }
         return $batches;
+    }
+
+    private function warnIfCacheLikelyTooLarge() {
+        if ($this->config->get('quiet')) {
+            return;
+        }
+        $limit_bytes = $this->getMemoryLimitBytes();
+        if ($limit_bytes <= 0) {
+            return;
+        }
+        $cache_size = @filesize($this->cache_file_name);
+        if ($cache_size === false || $cache_size <= 0) {
+            return;
+        }
+        if ($cache_size < ($limit_bytes / 4)) {
+            return;
+        }
+        $limit_mb = (int)round($limit_bytes / (1024 * 1024));
+        $size_mb = (int)round($cache_size / (1024 * 1024));
+        ConsoleOutput::writeLine(
+            "Process {$this->process_index}: Cache file is {$size_mb}MB with PHP memory limit {$limit_mb}MB. " .
+            "Consider --cache-from-disk to avoid out-of-memory errors."
+        );
+    }
+
+    private function getMemoryLimitBytes() {
+        $raw = trim((string)ini_get('memory_limit'));
+        if ($raw === '' || $raw === '-1') {
+            return -1;
+        }
+        $unit = strtolower(substr($raw, -1));
+        $value = (int)$raw;
+        switch ($unit) {
+            case 'g':
+                return $value * 1024 * 1024 * 1024;
+            case 'm':
+                return $value * 1024 * 1024;
+            case 'k':
+                return $value * 1024;
+            default:
+                return (int)$raw;
+        }
     }
     
     /**
@@ -543,7 +720,7 @@ class QueryGenerator {
             throw new Exception("ERROR: Cannot create cache file");
         }
 
-        $queries = [];
+        $queries = $this->cache_from_disk ? null : [];
         foreach ($worker_infos as $info) {
             $part = fopen($info['file'], 'r');
             if (!$part) {
@@ -556,7 +733,9 @@ class QueryGenerator {
                     continue;
                 }
                 fwrite($cache_file, $line . "\n");
-                $queries[] = rtrim($line, ';');
+                if ($queries !== null) {
+                    $queries[] = rtrim($line, ';');
+                }
             }
             fclose($part);
             unlink($info['file']);
@@ -573,7 +752,11 @@ class QueryGenerator {
             ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
         }
 
-        return $queries;
+        if ($this->cache_from_disk) {
+            return new CacheFileBatches($this->cache_file_name, true);
+        }
+
+        return $queries ?? [];
     }
     
     /**
@@ -627,12 +810,16 @@ class QueryGenerator {
                 if (count($batch) == $batch_size) {
                     $full_query = $base_query . implode(",", $batch);
                     fwrite($cache_file, $full_query . ";\n");
-                    $queries[] = $full_query;
+                    if ($queries !== null) {
+                        $queries[] = $full_query;
+                    }
                     $batch = [];
                 }
             } else {
                 fwrite($cache_file, $query . ";\n");
-                $queries[] = $query;
+                if ($queries !== null) {
+                    $queries[] = $query;
+                }
             }
             
             $c++;
@@ -648,7 +835,9 @@ class QueryGenerator {
         if (!empty($batch)) {
             $full_query = $base_query . implode(",", $batch);
             fwrite($cache_file, $full_query . "\n");
-            $queries[] = $full_query;
+            if ($queries !== null) {
+                $queries[] = $full_query;
+            }
         }
         
         fclose($cache_file);
@@ -659,7 +848,11 @@ class QueryGenerator {
             ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
         }
         
-        return $queries;
+        if ($this->cache_from_disk) {
+            return new CacheFileBatches($this->cache_file_name, true);
+        }
+
+        return $queries ?? [];
     }
 
     private function runCacheWorker($load_index, $start_row, $rows, $cache_file_name, $worker_index, $progress_file) {
@@ -853,12 +1046,16 @@ class QueryGenerator {
                 if (count($batch_buffers[$load_index]['batch']) == $batch_size) {
                     $full_query = $batch_buffers[$load_index]['base_query'] . implode(",", $batch_buffers[$load_index]['batch']);
                     fwrite($cache_file, $full_query . ";\n");
-                    $queries[] = $full_query;
+                    if ($queries !== null) {
+                        $queries[] = $full_query;
+                    }
                     $batch_buffers[$load_index]['batch'] = [];
                 }
             } else {
                 fwrite($cache_file, $query . ";\n");
-                $queries[] = $query;
+                if ($queries !== null) {
+                    $queries[] = $query;
+                }
             }
 
             $c++;
@@ -875,7 +1072,9 @@ class QueryGenerator {
             if (!empty($buffer['batch'])) {
                 $full_query = $buffer['base_query'] . implode(",", $buffer['batch']);
                 fwrite($cache_file, $full_query . "\n");
-                $queries[] = $full_query;
+                if ($queries !== null) {
+                    $queries[] = $full_query;
+                }
             }
         }
 
@@ -887,7 +1086,11 @@ class QueryGenerator {
             ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
         }
 
-        return $queries;
+        if ($this->cache_from_disk) {
+            return new CacheFileBatches($this->cache_file_name, true);
+        }
+
+        return $queries ?? [];
     }
 
     /**

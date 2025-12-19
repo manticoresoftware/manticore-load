@@ -298,6 +298,7 @@ Note: The `--json` option can only be used with `--quiet`. If used without `--qu
 | `--drop`         | Drop the table before starting (applies to target table only) |
 | `--delay`        | Delay in seconds between queries (default: 0)  |
 | `--cache-gen-workers` | Number of worker processes for cache generation (default: 1) |
+| `--cache-from-disk` | Stream cache from disk instead of loading into memory |
 
 ### Advanced Patterns
 

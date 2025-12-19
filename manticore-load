@@ -16,6 +16,21 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 // Memory limit setting
 ini_set('memory_limit', '8G');
 
+// Suggest streaming cache from disk on OOM in query generation
+register_shutdown_function(function () {
+    $error = error_get_last();
+    if (!$error || $error['type'] !== E_ERROR) {
+        return;
+    }
+    if (strpos($error['message'], 'Allowed memory size') === false) {
+        return;
+    }
+    if (strpos($error['message'], 'query_generator.php') === false) {
+        return;
+    }
+    fwrite(STDERR, "Hint: try --cache-from-disk to stream the cache instead of loading it into memory.\n");
+});
+
 // Enable signal handling
 declare(ticks = 1);
 
@@ -526,22 +541,28 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     if ($config->get('verbose')) {
         echo "\nProcess $process_index prepared queries:\n";
         echo "--------------------------------------------------------------------------------\n";
-        foreach (array_slice($batches, 0, 3) as $query) {
+        $preview_queries = is_array($batches) ? array_slice($batches, 0, 3) : (method_exists($batches, 'preview') ? $batches->preview(3) : []);
+        foreach ($preview_queries as $query) {
             echo $query . "\n";
         }
-        if (count($batches) > 3) {
-            echo "... (" . (count($batches) - 3) . " more queries)\n";
+        $total_batches = count($batches);
+        if ($total_batches > 3) {
+            echo "... (" . ($total_batches - 3) . " more queries)\n";
         }
         echo "--------------------------------------------------------------------------------\n\n";
     }
 
     // Handle iterations
     if ($process_config['iterations'] > 1) {
-        $batchesMulti = [];
-        for ($n = 0; $n < $process_config['iterations']; $n++) {
-            $batchesMulti = array_merge($batchesMulti, $batches);
+        if (is_array($batches)) {
+            $batchesMulti = [];
+            for ($n = 0; $n < $process_config['iterations']; $n++) {
+                $batchesMulti = array_merge($batchesMulti, $batches);
+            }
+            $batches = $batchesMulti;
+        } else {
+            $batches = new RepeatingBatches($batches, $process_config['iterations']);
         }
-        $batches = $batchesMulti;
     }
 
     // Initialize components

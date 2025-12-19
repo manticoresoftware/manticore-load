@@ -297,6 +297,7 @@ Note: The `--json` option can only be used with `--quiet`. If used without `--qu
 | `--init`         | Initial SQL commands (e.g., `CREATE TABLE`)         |
 | `--drop`         | Drop the table before starting (applies to target table only) |
 | `--delay`        | Delay in seconds between queries (default: 0)  |
+| `--cache-gen-workers` | Number of worker processes for cache generation (default: 1) |
 
 ### Advanced Patterns
 

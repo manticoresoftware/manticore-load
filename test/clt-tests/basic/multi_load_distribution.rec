@@ -1,0 +1,153 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet > /dev/null
+––– output –––
+––– input –––
+mysql -P9306 -h0 -e "select * from t order by id asc"
+––– output –––
++------+------+
+| id   | a    |
++------+------+
+|    1 |   25 |
+|    2 |   30 |
+|    3 |   24 |
+|    4 |   23 |
+|    5 |    8 |
+|    6 |   10 |
+|    7 |    1 |
+|    8 |   10 |
+|    9 |    3 |
+|   10 |   10 |
+|   11 |    4 |
+|   12 |    5 |
++------+------+
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet --load-distribution=1,3
+––– output –––
+ERROR: --load-distribution values cannot total more than 1 for process 1
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet --load-distribution=0.2,0.9
+––– output –––
+ERROR: --load-distribution values cannot total more than 1 for process 1
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet --load-distribution=0.2,0.7,0.1
+––– output –––
+ERROR: --load-distribution must have 2 values for process 1
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet --load-distribution=0.2,-0.7
+––– output –––
+ERROR: --load-distribution values cannot be negative for process 1
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=20 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/20/30> where id = <int/1/7>" --threads=1 --quiet --load-distribution=0.2,0.8 > /dev/null
+––– output –––
+––– input –––
+mysql -P9306 -h0 -e "select * from t order by id asc"
+––– output –––
++------+------+
+| id   | a    |
++------+------+
+|    1 |   25 |
+|    2 |   30 |
+|    3 |   24 |
+|    4 |   23 |
+|    5 |   25 |
+|    6 |   22 |
+|    7 |    1 |
+|    8 |   10 |
+|    9 |    3 |
+|   10 |   10 |
++------+------+
+––– input –––
+./manticore-load --drop --init="create table t(a int)" --total=100 --batch-size=5 --load="insert into t values(<increment>, <int/1/10>)" --load="update t set a = <int/100/200> where a = <int/1/10>" --threads=2 --load-distribution=0.3,0.7 > /dev/null
+––– output –––
+––– input –––
+mysql -P9306 -h0 -e "select count(*) from t"
+––– output –––
++----------+
+| count(*) |
++----------+
+|       36 |
++----------+
+––– input –––
+cat `ls -t /tmp/manticore_load*|head -1`
+––– output –––
+update t set a = 194 where a = 8;
+update t set a = 112 where a = 1;
+update t set a = 143 where a = 3;
+insert into t values(1, 7),(2, 4),(3, 5),(4, 5),(5, 8);
+update t set a = 106 where a = 10;
+update t set a = 152 where a = 2;
+update t set a = 153 where a = 2;
+update t set a = 166 where a = 10;
+update t set a = 163 where a = 7;
+insert into t values(6, 10),(7, 1),(8, 10),(9, 3),(10, 10);
+update t set a = 178 where a = 5;
+update t set a = 162 where a = 1;
+update t set a = 124 where a = 10;
+update t set a = 134 where a = 9;
+update t set a = 200 where a = 1;
+update t set a = 177 where a = 1;
+update t set a = 161 where a = 1;
+update t set a = 173 where a = 8;
+update t set a = 198 where a = 4;
+update t set a = 132 where a = 5;
+update t set a = 130 where a = 4;
+insert into t values(11, 4),(12, 1),(13, 4),(14, 9),(15, 10);
+update t set a = 148 where a = 6;
+update t set a = 130 where a = 8;
+update t set a = 145 where a = 2;
+update t set a = 131 where a = 10;
+update t set a = 138 where a = 8;
+update t set a = 184 where a = 2;
+update t set a = 112 where a = 6;
+update t set a = 199 where a = 5;
+update t set a = 160 where a = 1;
+update t set a = 160 where a = 9;
+update t set a = 147 where a = 8;
+update t set a = 134 where a = 10;
+update t set a = 167 where a = 10;
+update t set a = 114 where a = 9;
+insert into t values(16, 1),(17, 10),(18, 7),(19, 7),(20, 1);
+update t set a = 190 where a = 10;
+update t set a = 164 where a = 9;
+update t set a = 119 where a = 3;
+update t set a = 126 where a = 9;
+update t set a = 175 where a = 7;
+update t set a = 167 where a = 1;
+update t set a = 168 where a = 4;
+update t set a = 100 where a = 6;
+update t set a = 151 where a = 9;
+update t set a = 107 where a = 10;
+update t set a = 156 where a = 9;
+insert into t values(21, 10),(22, 3),(23, 4),(24, 9),(25, 3);
+update t set a = 131 where a = 1;
+update t set a = 187 where a = 6;
+update t set a = 167 where a = 10;
+update t set a = 104 where a = 3;
+update t set a = 151 where a = 9;
+update t set a = 196 where a = 6;
+update t set a = 165 where a = 7;
+update t set a = 189 where a = 9;
+update t set a = 100 where a = 1;
+update t set a = 179 where a = 8;
+insert into t values(26, 3),(27, 2),(28, 5),(29, 10),(30, 9);
+update t set a = 147 where a = 2;
+update t set a = 185 where a = 8;
+update t set a = 170 where a = 8;
+update t set a = 146 where a = 2;
+update t set a = 187 where a = 7;
+update t set a = 136 where a = 9;
+insert into t values(31, 2),(32, 1),(33, 6),(34, 6),(35, 9);
+update t set a = 165 where a = 1;
+update t set a = 190 where a = 5;
+update t set a = 136 where a = 3;
+update t set a = 166 where a = 5;
+insert into t values(36, 4)

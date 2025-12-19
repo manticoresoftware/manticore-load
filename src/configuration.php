@@ -26,6 +26,7 @@ class Configuration implements ArrayAccess {
         'port:',
         'init:',
         'load:',
+        'load-distribution:',
         'drop::',
         'batch-size:',
         'threads:',
@@ -98,7 +99,7 @@ class Configuration implements ArrayAccess {
         $process_options = [];
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
-            'iterations', 'init', 'load', 'column', 'delay'
+            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay'
         ];
         $index = 1;
         
@@ -120,7 +121,17 @@ class Configuration implements ArrayAccess {
                             continue;
                         }
                         if (in_array($key, $per_process_params)) {
-                            $process_options[$key] = $value;
+                            if ($key === 'load') {
+                                if (!isset($process_options['load'])) {
+                                    $process_options['load'] = [];
+                                }
+                                if (!is_array($process_options['load'])) {
+                                    $process_options['load'] = [$process_options['load']];
+                                }
+                                $process_options['load'][] = $value;
+                            } else {
+                                $process_options[$key] = $value;
+                            }
                         } else {
                             $options[$key] = $value;
                         }
@@ -203,7 +214,18 @@ class Configuration implements ArrayAccess {
             );
             
             if (isset($process['load'])) {
-                $process['load_command'] = $process['load'];
+                if (is_array($process['load'])) {
+                    $process['load_commands'] = $process['load'];
+                } else {
+                    $process['load_commands'] = [$process['load']];
+                }
+                $process['load_command'] = $process['load_commands'][0];
+            }
+
+            if (isset($process['load-distribution'])) {
+                $process['load_distribution'] = $this->parseLoadDistribution($process['load-distribution']);
+            } elseif (isset($process['load_commands']) && count($process['load_commands']) > 1) {
+                $process['load_distribution'] = $this->getDefaultDistribution(count($process['load_commands']));
             }
             
             if (isset($process['init'])) {
@@ -252,7 +274,9 @@ class Configuration implements ArrayAccess {
         foreach ($this->processes as $index => $process) {
             $required = ['total', 'load'];
 
-            if ($this->isInsertQuery($process['load_command'] ?? null)) {
+            $load_commands = $process['load_commands'] ?? (isset($process['load_command']) ? [$process['load_command']] : []);
+
+            if ($this->isInsertQuery($load_commands)) {
                 $required[] = 'batch-size';
             }
 
@@ -260,6 +284,31 @@ class Configuration implements ArrayAccess {
                 if (!isset($process[$param]) || $process[$param] === null) {
                     $arg_name = str_replace('_', '-', $param);
                     die("ERROR: Missing required parameter --$arg_name for process " . $index . "\n");
+                }
+            }
+
+            if (!empty($load_commands) && count($load_commands) > 1 && isset($process['load_distribution'])) {
+                $distribution = $process['load_distribution'];
+                if (!is_array($distribution)) {
+                    die("ERROR: Invalid --load-distribution format for process " . $index . "\n");
+                }
+                if (count($distribution) !== count($load_commands)) {
+                    die("ERROR: --load-distribution must have " . count($load_commands) . " values for process " . $index . "\n");
+                }
+
+                $sum = 0.0;
+                foreach ($distribution as $value) {
+                    if ($value < 0) {
+                        die("ERROR: --load-distribution values cannot be negative for process " . $index . "\n");
+                    }
+                    $sum += $value;
+                }
+
+                if ($sum > 1.000001) {
+                    die("ERROR: --load-distribution values cannot total more than 1 for process " . $index . "\n");
+                }
+                if (abs(1.0 - $sum) > 0.000001) {
+                    die("ERROR: --load-distribution values must total 1 for process " . $index . "\n");
                 }
             }
 
@@ -309,6 +358,14 @@ class Configuration implements ArrayAccess {
         if ($command === null) {
             return false;
         }
+        if (is_array($command)) {
+            foreach ($command as $item) {
+                if (self::isInsertQuery($item)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         $command = strtolower($command);
         return strpos($command, 'insert') === 0 || strpos($command, 'replace') === 0;
     }
@@ -329,7 +386,7 @@ class Configuration implements ArrayAccess {
             "  --threads=N                  Number of concurrent threads (single value or comma-separated list)\n" .
             "  --total=N                    For INSERT/REPLACE: total documents to generate\n" .
             "                               For SELECT/other: total queries to execute\n" .
-            "  --load=SQL                   SQL command template for the main load\n" .
+            "  --load=SQL                   SQL command template for the main load (repeatable)\n" .
             
             "\nOptional options:\n" .
             "  --batch-size=N               Number of documents per batch (single value or comma-separated list)\n" .
@@ -348,6 +405,8 @@ class Configuration implements ArrayAccess {
             "                               Each section after --together can have its own process-specific\n" .
             "                               options (threads, batch-size, load, etc). Global options\n" .
             "                               like host and port should be specified before the first --together\n" .
+            "  --load-distribution=LIST     Comma-separated weights for multiple --load options\n" .
+            "                               Must sum to 1 (default: even split, e.g. 0.5,0.5)\n" .
             "  --help                       Show this help message\n" .
             "  --column=NAME/VALUE           Add custom column in quiet mode output\n" .
             "                               Format: --column=name/value (e.g., batch/1000)\n" .
@@ -391,6 +450,38 @@ class Configuration implements ArrayAccess {
             "--threads=1 --total=5000 \\\n" .
             "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n"
         );
+    }
+
+    /**
+     * Parses a comma-separated load distribution string into an array of floats.
+     *
+     * @param string $distribution
+     * @return array
+     */
+    private function parseLoadDistribution($distribution) {
+        $parts = array_map('trim', explode(',', $distribution));
+        $values = [];
+        foreach ($parts as $part) {
+            if ($part === '' || !is_numeric($part)) {
+                die("ERROR: Invalid --load-distribution value: $part\n");
+            }
+            $values[] = (float)$part;
+        }
+        return $values;
+    }
+
+    /**
+     * Returns a default, even distribution for the given number of loads.
+     *
+     * @param int $count
+     * @return array
+     */
+    private function getDefaultDistribution($count) {
+        if ($count <= 0) {
+            return [];
+        }
+        $weight = 1.0 / $count;
+        return array_fill(0, $count, $weight);
     }
 
     /**
@@ -492,6 +583,16 @@ class Configuration implements ArrayAccess {
         if (!$sql) {
             return '';
         }
+
+        if (is_array($sql)) {
+            foreach ($sql as $item) {
+                $table = $this->extractTableName($item);
+                if ($table !== '') {
+                    return $table;
+                }
+            }
+            return '';
+        }
         
         $sql = strtolower($sql);
         
@@ -521,6 +622,27 @@ class Configuration implements ArrayAccess {
      */
     private function extractLoadType($sql) {
         if (!$sql) {
+            return 'other';
+        }
+
+        if (is_array($sql)) {
+            $types = [];
+            foreach ($sql as $item) {
+                $types[] = $this->extractLoadType($item);
+            }
+            // If any load is insert/replace, treat the combined workload as insert for progress stats
+            if (in_array('insert', $types, true) || in_array('replace', $types, true)) {
+                return 'insert';
+            }
+            $types = array_unique($types);
+            if (count($types) === 1) {
+                return $types[0];
+            }
+            $non_other = array_diff($types, ['other']);
+            if (!empty($non_other)) {
+                // Prefer the first non-other type for mixed workloads without inserts
+                return reset($non_other);
+            }
             return 'other';
         }
         
@@ -560,7 +682,9 @@ class Configuration implements ArrayAccess {
         
         // Extract table name from SQL queries
         $table = '';
-        if (isset($config['load_command'])) {
+        if (isset($config['load_commands'])) {
+            $table = $this->extractTableName($config['load_commands']);
+        } elseif (isset($config['load_command'])) {
             $table = $this->extractTableName($config['load_command']);
         }
         if (!$table && isset($config['init_command'])) {
@@ -570,7 +694,9 @@ class Configuration implements ArrayAccess {
         $config['table'] = $table;
         
         // Add operation type
-        if (isset($config['load_command'])) {
+        if (isset($config['load_commands'])) {
+            $config['load_type'] = $this->extractLoadType($config['load_commands']);
+        } elseif (isset($config['load_command'])) {
             $config['load_type'] = $this->extractLoadType($config['load_command']);
         } else {
             $config['load_type'] = 'other';

@@ -30,7 +30,8 @@ Time      Elapsed   1:Progress  2:Progress  1:QPS    2:QPS    1:DPS    2:DPS    
 --------------------------------------------------------------------------------------
 Process 2 final statistics:
 Init command:     create table t2
-Load command:     insert into t2 values(<increment>)
+Load commands:
+  - insert into t2 values(<increment>)
 Total time:       #!/(4|5)\.\d/!#s
 Total queries:    10
 Threads:          1
@@ -55,7 +56,8 @@ Latency 99p:      505.#!/\d/!# ms
 --------------------------------------------------------------------------------------
 Process 1 final statistics:
 Init command:     create table t
-Load command:     insert into t values(<increment>)
+Load commands:
+  - insert into t values(<increment>)
 Total time:       9.#!/\d/!#s
 Total queries:    10
 Threads:          1

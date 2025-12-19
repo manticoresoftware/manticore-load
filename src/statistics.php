@@ -347,7 +347,15 @@ class Statistics {
         if (isset($process_info['init_command'])) {
             $output .= sprintf("Init command:     %s\n", $process_info['init_command']);
         }
-        $output .= sprintf("Load command:     %s\n", $process_info['load_command']);
+        $load_command = $process_info['load_command'];
+        if (is_array($load_command)) {
+            $output .= "Load commands:\n";
+            foreach ($load_command as $command) {
+                $output .= sprintf("  - %s\n", $command);
+            }
+        } else {
+            $output .= sprintf("Load command:     %s\n", $load_command);
+        }
         
         $output .= sprintf("Total time:       %s\n", ProgressDisplay::formatElapsedTime($total_time));
         $output .= sprintf("Total queries:    %d\n", $this->completed_queries);

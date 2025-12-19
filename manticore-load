@@ -230,7 +230,8 @@ foreach ($processes as $process_index => $process_config) {
                     $process_config_copy['batch-size'] = $batch_size;
                     
                     if (!$config->get('quiet')) {
-                        $is_insert = Configuration::isInsertQuery($process_config['load_command']);
+                        $load_commands = $process_config['load_commands'] ?? $process_config['load_command'] ?? null;
+                        $is_insert = Configuration::isInsertQuery($load_commands);
                         $batch_size_info = $is_insert ? ", batch-size=$batch_size" : "";
                         echo "======================================================================================\n";
                         echo "Process $process_index: Running with threads=$threads$batch_size_info\n";
@@ -334,8 +335,14 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     }
 
     // Ensure load_command is set
-    if (isset($process_config['load'])) {
-        $process_configuration->set('load_command', $process_config['load']);
+    $load_commands = $process_config['load_commands'] ?? $process_config['load'] ?? $process_config['load_command'] ?? null;
+    if ($load_commands !== null) {
+        $load_commands = is_array($load_commands) ? $load_commands : [$load_commands];
+        $process_configuration->set('load_commands', $load_commands);
+        $process_configuration->set('load_command', $load_commands[0] ?? null);
+    }
+    if (isset($process_config['load_distribution'])) {
+        $process_configuration->set('load-distribution', $process_config['load_distribution']);
     }
 
     // Set process index in configuration
@@ -440,8 +447,14 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     }
 
     // Extract table name from load command if not found in init command
-    if (!isset($table_name) && preg_match('/(?:from|into)\s+([^\s(,]+)/i', $process_config['load_command'], $matches)) {
-        $table_name = $matches[1];
+    if (!isset($table_name)) {
+        $load_commands = $process_config['load_commands'] ?? [$process_config['load_command']];
+        foreach ($load_commands as $command) {
+            if (preg_match('/(?:from|into)\s+([^\s(,]+)/i', $command, $matches)) {
+                $table_name = $matches[1];
+                break;
+            }
+        }
     }
     // Validate table name if found
     if (isset($table_name) && !preg_match('/^[a-zA-Z0-9_:]+$/', $table_name)) {
@@ -478,11 +491,11 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $monitoring = new MonitoringStats($config->get('host'), $config->get('port'), $table_name ?? null);
 
     // Create statistics instance for this process
+    $load_commands = $process_config['load_commands'] ?? $process_config['load_command'];
     $statistics = new Statistics(
         $process_config['threads'],
         $process_config['batch-size'],
-        strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
-        strpos(strtolower($process_config['load_command']), 'replace') === 0,
+        Configuration::isInsertQuery($load_commands),
         $config,
         $process_index
     );
@@ -491,8 +504,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $progress = new ProgressDisplay(
         $process_config['quiet'],
         count($batches), 
-        strpos(strtolower($process_config['load_command']), 'insert') === 0 || 
-        strpos(strtolower($process_config['load_command']), 'replace') === 0,
+        Configuration::isInsertQuery($load_commands),
         $config->get('latency-histograms'),
         $statistics
     );
@@ -618,7 +630,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         'quiet' => $config->get('quiet'),
         'json' => $config->get('json'),
         'init_command' => $process_config['init_command'] ?? null,
-        'load_command' => $process_config['load_command'],
+        'load_command' => $process_config['load_commands'] ?? $process_config['load_command'],
         'column' => $process_config['column'] ?? null,
         'process_index' => $process_index
     ];

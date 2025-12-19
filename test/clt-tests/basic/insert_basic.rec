@@ -30,7 +30,8 @@ Time      Elapsed   Progress    QPS      DPS      CPU     Workers    Chunks    M
 --------------------------------------------------------------------------------------
 Process 1 final statistics:
 Init command:     create table t
-Load command:     insert into t values(<increment>)
+Load commands:
+  - insert into t values(<increment>)
 Total time:       9#!/\.\d/!#s
 Total queries:    10
 Threads:          1

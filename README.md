@@ -80,6 +80,48 @@ manticore-load \
 
 ### Advanced Examples
 
+#### Mixed Workload Example
+
+Run a single process with multiple load statements using a weighted distribution:
+
+```bash
+manticore-load \
+  --threads=4 \
+  --total=10000 \
+  --load="SELECT * FROM test WHERE MATCH('<text/1/2>')" \
+  --load="SELECT * FROM test WHERE MATCH('<text/10/20>')" \
+  --load-distribution=0.3,0.7
+```
+
+This runs a single workload that has multiple `--load` templates. For each of the `--total` iterations, `manticore-load` picks one of the templates using `--load-distribution` (defaults to an even split if you omit it), so roughly 30% of the queries come from the first template and 70% from the second. If your templates use `<increment>`, each template keeps its own counter.
+
+If you use `--batch-size > 1` with INSERT/REPLACE templates, `--total` still controls how many rows are generated, but the tool buffers rows per template and only emits a batched statement once a template has accumulated `--batch-size` rows. This means the distribution applies to generated rows (not necessarily to the number of SQL statements), and you may see a smaller “final” batch per template at the end of the run.
+
+Example with batching and mixed templates (INSERT + UPDATE):
+
+```bash
+manticore-load \
+  --drop \
+  --init="create table t(id int, a int)" \
+  --total=10 \
+  --batch-size=2 \
+  --load="insert into t values(<increment>, <int/1/10>)" \
+  --load="update t set a = <int/100/200> where a = <int/1/5>"
+```
+
+One possible set of prepared queries (showing how INSERT rows are batched and UPDATEs are interleaved):
+
+```sql
+update t set a = 102 where a = 5;
+update t set a = 112 where a = 1;
+insert into t values(1, 8),(2, 4);
+insert into t values(3, 5),(4, 5);
+update t set a = 143 where a = 3;
+update t set a = 106 where a = 5;
+update t set a = 152 where a = 2;
+insert into t values(5, 8)
+```
+
 #### Multi-Process Example
 
 Run multiple workloads simultaneously:
@@ -250,7 +292,8 @@ Note: The `--json` option can only be used with `--quiet`. If used without `--qu
 | `--total`        | Total queries or documents to process               |
 | `--batch-size`   | Batch size for inserts or replacements (single value or comma-separated list, e.g., "100,1000,10000") |
 | `--iterations`   | Number of times to repeat data generation           |
-| `--load`         | SQL command template for the workload               |
+| `--load`         | SQL command template for the workload (repeatable)  |
+| `--load-distribution` | Comma-separated weights for multiple `--load` values (default: even split) |
 | `--init`         | Initial SQL commands (e.g., `CREATE TABLE`)         |
 | `--drop`         | Drop the table before starting (applies to target table only) |
 | `--delay`        | Delay in seconds between queries (default: 0)  |

@@ -16,7 +16,11 @@ Source code available at: https://github.com/manticoresoftware/manticore-load
 class QueryGenerator {
     private $config;
     private $cache_file_name;
-    private $load_info;
+    private $load_infos = [];
+    private $load_commands = [];
+    private $load_distribution = [];
+    private $increment_counters = [];
+    private $is_tty = true;
     private static $words = null;
     private static $words_count = null;
     private $process_index;
@@ -43,7 +47,20 @@ class QueryGenerator {
         
         $this->config = $config;
         $this->process_index = $config->get('process_index');
-        $this->load_info = $this->parseLoadCommand($config->get('load_command'));
+        $this->load_commands = $config->get('load_commands');
+        if ($this->load_commands === null) {
+            $load_command = $config->get('load_command');
+            $this->load_commands = is_array($load_command) ? $load_command : [$load_command];
+        }
+        foreach ($this->load_commands as $command) {
+            $this->load_infos[] = $this->parseLoadCommand($command);
+        }
+        $this->load_distribution = $config->get('load-distribution') ?? $config->get('load_distribution') ?? [];
+        if (count($this->load_distribution) === 0 && count($this->load_commands) > 1) {
+            $weight = 1.0 / count($this->load_commands);
+            $this->load_distribution = array_fill(0, count($this->load_commands), $weight);
+        }
+        $this->is_tty = function_exists('posix_isatty') ? posix_isatty(STDOUT) : true;
         $this->cache_file_name = $this->generateCacheFileName();
         
         // Get the same shared memory segment
@@ -286,7 +303,7 @@ class QueryGenerator {
      * @return mixed Generated value
      * @throws Exception If pattern format is invalid
      */
-    private function generateValue($pattern) {
+    private function generateValue($pattern, $load_index) {
         if (!is_array($pattern) || !isset($pattern['type'])) {
             throw new Exception("Invalid pattern format");
         }
@@ -296,12 +313,14 @@ class QueryGenerator {
                 return "'" . addslashes($pattern['value']) . "'";
                 
             case 'increment':
-                static $counters = [];
-                $key = json_encode($pattern);
-                if (!isset($counters[$key])) {
-                    $counters[$key] = $pattern['start'] - 1;
+                if (!isset($this->increment_counters[$load_index])) {
+                    $this->increment_counters[$load_index] = [];
                 }
-                return ++$counters[$key];
+                $key = json_encode($pattern);
+                if (!isset($this->increment_counters[$load_index][$key])) {
+                    $this->increment_counters[$load_index][$key] = $pattern['start'] - 1;
+                }
+                return ++$this->increment_counters[$load_index][$key];
                 
             case 'string':
                 return self::generateRandomString(
@@ -356,7 +375,8 @@ class QueryGenerator {
         // Create a unique cache key based on all relevant parameters
         $cache_key = implode('_', [
             $this->config->get('init_command'),
-            $this->config->get('load_command'),
+            json_encode($this->load_commands),
+            json_encode($this->load_distribution),
             $this->config->get('total'),
             $this->config->get('batch-size'),
             $this->config->get('process_index')
@@ -399,6 +419,21 @@ class QueryGenerator {
      * @throws Exception If cache file cannot be created
      */
     private function generateAndCacheQueries($quiet) {
+        if (count($this->load_infos) === 1) {
+            return $this->generateAndCacheSingleLoad($quiet, 0);
+        }
+
+        return $this->generateAndCacheMultiLoad($quiet);
+    }
+    
+    /**
+     * Generates queries for a single load command and saves them to cache
+     * @param bool $quiet If true, suppresses progress output
+     * @param int $load_index Index of the load command to use
+     * @return array Array of generated queries
+     * @throws Exception If cache file cannot be created
+     */
+    private function generateAndCacheSingleLoad($quiet, $load_index) {
         $cache_file = fopen($this->cache_file_name, 'w');
         if (!$cache_file) {
             throw new Exception("ERROR: Cannot create cache file");
@@ -407,10 +442,12 @@ class QueryGenerator {
         $c = 0;
         $batch = [];
         $base_query = null;
-        $batch_size = $this->load_info['is_batch_compatible'] ? $this->config->get('batch-size') : 1;
+        $batch_size = $this->load_infos[$load_index]['is_batch_compatible'] ? $this->config->get('batch-size') : 1;
         $queries = [];
+        $total = $this->config->get('total');
+        $progress_enabled = !$quiet && $this->is_tty;
         
-        while ($c < $this->config->get('total')) {
+        while ($c < $total) {
             // Check stop flag in shared memory
             $stop_requested = ord(shmop_read($this->stop_shm_id, 0, 1)) === 1;
             
@@ -418,15 +455,14 @@ class QueryGenerator {
                 fclose($cache_file);
                 unlink($this->cache_file_name);
                 if (!$quiet) {
-                    ConsoleOutput::write(sprintf("\r%-80s\r", ""));
                     ConsoleOutput::writeLine("Process {$this->process_index}: Cache generation interrupted.");
                 }
                 return [];
             }
 
-            $query = $this->generateSingleQuery();
+            $query = $this->generateSingleQueryForLoad($load_index);
             
-            if ($this->load_info['is_batch_compatible'] && $batch_size > 1) {
+            if ($this->load_infos[$load_index]['is_batch_compatible'] && $batch_size > 1) {
                 if ($base_query === null) {
                     if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
                         $base_query = $matches[1];
@@ -450,10 +486,10 @@ class QueryGenerator {
             }
             
             $c++;
-            if ($c % 1000 == 0 && !$quiet) {
+            if ($progress_enabled && $c % 1000 == 0) {
                 $progress = sprintf("\r%-80s\r", "");
                 $progress .= sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... %d%%", 
-                    round($c * 100 / $this->config->get('total'))
+                    round($c * 100 / $total)
                 );
                 ConsoleOutput::write($progress);
             }
@@ -467,22 +503,118 @@ class QueryGenerator {
         
         fclose($cache_file);
         if (!$quiet) {
-            ConsoleOutput::write(sprintf("\r%-80s\r", ""));
+            if ($this->is_tty) {
+                ConsoleOutput::write(sprintf("\r%-80s\r", ""));
+            }
             ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
         }
         
         return $queries;
     }
-    
+
+    /**
+     * Generates queries for multiple load commands and saves them to cache
+     * @param bool $quiet If true, suppresses progress output
+     * @return array Array of generated queries
+     * @throws Exception If cache file cannot be created
+     */
+    private function generateAndCacheMultiLoad($quiet) {
+        $cache_file = fopen($this->cache_file_name, 'w');
+        if (!$cache_file) {
+            throw new Exception("ERROR: Cannot create cache file");
+        }
+
+        $total = $this->config->get('total');
+        $batch_size = $this->config->get('batch-size');
+        $queries = [];
+        $batch_buffers = [];
+        foreach ($this->load_infos as $index => $info) {
+            $batch_buffers[$index] = [
+                'base_query' => null,
+                'batch' => []
+            ];
+        }
+        $progress_enabled = !$quiet && $this->is_tty;
+
+        $c = 0;
+        while ($c < $total) {
+            // Check stop flag in shared memory
+            $stop_requested = ord(shmop_read($this->stop_shm_id, 0, 1)) === 1;
+
+            if ($stop_requested) {
+                fclose($cache_file);
+                unlink($this->cache_file_name);
+                if (!$quiet) {
+                    ConsoleOutput::writeLine("Process {$this->process_index}: Cache generation interrupted.");
+                }
+                return [];
+            }
+
+            $load_index = $this->chooseLoadIndex();
+            $query = $this->generateSingleQueryForLoad($load_index);
+            $load_info = $this->load_infos[$load_index];
+
+            if ($load_info['is_batch_compatible'] && $batch_size > 1) {
+                if ($batch_buffers[$load_index]['base_query'] === null) {
+                    if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
+                        $batch_buffers[$load_index]['base_query'] = $matches[1];
+                        $batch_buffers[$load_index]['batch'][] = "(" . $matches[2] . ")";
+                    }
+                } else {
+                    if (preg_match('/VALUES\s*\((.*)\)/i', $query, $matches)) {
+                        $batch_buffers[$load_index]['batch'][] = "(" . $matches[1] . ")";
+                    }
+                }
+
+                if (count($batch_buffers[$load_index]['batch']) == $batch_size) {
+                    $full_query = $batch_buffers[$load_index]['base_query'] . implode(",", $batch_buffers[$load_index]['batch']);
+                    fwrite($cache_file, $full_query . ";\n");
+                    $queries[] = $full_query;
+                    $batch_buffers[$load_index]['batch'] = [];
+                }
+            } else {
+                fwrite($cache_file, $query . ";\n");
+                $queries[] = $query;
+            }
+
+            $c++;
+            if ($progress_enabled && $c % 1000 == 0) {
+                $progress = sprintf("\r%-80s\r", "");
+                $progress .= sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... %d%%", 
+                    round($c * 100 / $total)
+                );
+                ConsoleOutput::write($progress);
+            }
+        }
+
+        foreach ($batch_buffers as $buffer) {
+            if (!empty($buffer['batch'])) {
+                $full_query = $buffer['base_query'] . implode(",", $buffer['batch']);
+                fwrite($cache_file, $full_query . "\n");
+                $queries[] = $full_query;
+            }
+        }
+
+        fclose($cache_file);
+        if (!$quiet) {
+            if ($this->is_tty) {
+                ConsoleOutput::write(sprintf("\r%-80s\r", ""));
+            }
+            ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
+        }
+
+        return $queries;
+    }
+
     /**
      * Generates a single query by replacing patterns with generated values
      * @return string Generated SQL query
      */
-    private function generateSingleQuery() {
-        $query = $this->load_info['command'];
+    private function generateSingleQueryForLoad($load_index) {
+        $query = $this->load_infos[$load_index]['command'];
         
         // Sort pattern occurrences by offset in descending order to avoid offset issues when replacing
-        $occurrences = $this->load_info['pattern_occurrences'];
+        $occurrences = $this->load_infos[$load_index]['pattern_occurrences'];
         usort($occurrences, function($a, $b) {
             return $b['offset'] - $a['offset'];
         });
@@ -490,8 +622,8 @@ class QueryGenerator {
         // Replace each pattern occurrence with a unique value
         foreach ($occurrences as $occurrence) {
             $pattern_text = $occurrence['text'];
-            $pattern = $this->load_info['patterns'][$pattern_text];
-            $value = $this->generateValue($pattern);
+            $pattern = $this->load_infos[$load_index]['patterns'][$pattern_text];
+            $value = $this->generateValue($pattern, $load_index);
             
             // Replace the pattern at the specific position
             $query = substr_replace(
@@ -504,6 +636,22 @@ class QueryGenerator {
         
         rtrim($query, ';');
         return $query;
+    }
+
+    /**
+     * Selects a load index based on configured distribution
+     * @return int Selected load index
+     */
+    private function chooseLoadIndex() {
+        $rand = rand() / getrandmax();
+        $cumulative = 0.0;
+        foreach ($this->load_distribution as $index => $weight) {
+            $cumulative += $weight;
+            if ($rand <= $cumulative) {
+                return $index;
+            }
+        }
+        return count($this->load_distribution) - 1;
     }
     
     /**

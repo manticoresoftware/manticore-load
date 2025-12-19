@@ -442,8 +442,12 @@ class QueryGenerator {
         }
 
         $workers = min($workers, $total);
-        $rows_per_worker = intdiv($total, $workers);
-        $remainder = $total % $workers;
+        $worker_rows = $this->allocateWorkerRows(
+            $total,
+            $workers,
+            $this->config->get('batch-size'),
+            $this->load_infos[$load_index]['is_batch_compatible']
+        );
         $worker_infos = [];
         $progress_files = [];
 
@@ -452,8 +456,11 @@ class QueryGenerator {
         }
 
         $start_row = 0;
-        for ($i = 0; $i < $workers; $i++) {
-            $rows = $rows_per_worker + ($i < $remainder ? 1 : 0);
+        for ($i = 0; $i < count($worker_rows); $i++) {
+            $rows = $worker_rows[$i];
+            if ($rows <= 0) {
+                continue;
+            }
             $part_file = $this->cache_file_name . ".part." . $i;
             $progress_file = $this->cache_file_name . ".progress." . $i . "." . getmypid();
             $progress_files[] = $progress_file;
@@ -751,6 +758,42 @@ class QueryGenerator {
             $start = $info['pattern']['start'] ?? 1;
             $this->increment_counters[$load_index][$key] = $start - 1 + ($start_row * $info['count_per_row']);
         }
+    }
+
+    private function allocateWorkerRows($total, $workers, $batch_size, $batch_compatible) {
+        if ($workers <= 1) {
+            return [$total];
+        }
+        if (!$batch_compatible || $batch_size <= 1) {
+            $rows_per_worker = intdiv($total, $workers);
+            $remainder = $total % $workers;
+            $rows = [];
+            for ($i = 0; $i < $workers; $i++) {
+                $rows[] = $rows_per_worker + ($i < $remainder ? 1 : 0);
+            }
+            return $rows;
+        }
+
+        $full_batches = intdiv($total, $batch_size);
+        $remainder_rows = $total % $batch_size;
+        if ($full_batches === 0) {
+            return [$total];
+        }
+
+        $workers = min($workers, $full_batches);
+        $batches_per_worker = intdiv($full_batches, $workers);
+        $remainder_batches = $full_batches % $workers;
+        $rows = [];
+        for ($i = 0; $i < $workers; $i++) {
+            $batches = $batches_per_worker + ($i < $remainder_batches ? 1 : 0);
+            $rows[] = $batches * $batch_size;
+        }
+
+        if ($remainder_rows > 0) {
+            $rows[count($rows) - 1] += $remainder_rows;
+        }
+
+        return $rows;
     }
 
     /**

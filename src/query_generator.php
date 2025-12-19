@@ -379,6 +379,7 @@ class QueryGenerator {
             json_encode($this->load_distribution),
             $this->config->get('total'),
             $this->config->get('batch-size'),
+            $this->config->get('cache-gen-workers'),
             $this->config->get('process_index')
         ]);
         
@@ -420,10 +421,152 @@ class QueryGenerator {
      */
     private function generateAndCacheQueries($quiet) {
         if (count($this->load_infos) === 1) {
+            $workers = (int)$this->config->get('cache-gen-workers');
+            if ($workers > 1) {
+                return $this->generateAndCacheSingleLoadParallel($quiet, 0, $workers);
+            }
             return $this->generateAndCacheSingleLoad($quiet, 0);
         }
 
         return $this->generateAndCacheMultiLoad($quiet);
+    }
+
+    private function generateAndCacheSingleLoadParallel($quiet, $load_index, $workers) {
+        if (!function_exists('pcntl_fork')) {
+            return $this->generateAndCacheSingleLoad($quiet, $load_index);
+        }
+
+        $total = $this->config->get('total');
+        if ($total <= 0) {
+            return $this->generateAndCacheSingleLoad($quiet, $load_index);
+        }
+
+        $workers = min($workers, $total);
+        $rows_per_worker = intdiv($total, $workers);
+        $remainder = $total % $workers;
+        $worker_infos = [];
+        $progress_files = [];
+
+        if (!$quiet) {
+            ConsoleOutput::writeLine("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ...");
+        }
+
+        $start_row = 0;
+        for ($i = 0; $i < $workers; $i++) {
+            $rows = $rows_per_worker + ($i < $remainder ? 1 : 0);
+            $part_file = $this->cache_file_name . ".part." . $i;
+            $progress_file = $this->cache_file_name . ".progress." . $i . "." . getmypid();
+            $progress_files[] = $progress_file;
+            $pid = pcntl_fork();
+            if ($pid === -1) {
+                throw new Exception("ERROR: Cannot fork cache generator");
+            }
+            if ($pid === 0) {
+                $this->runCacheWorker($load_index, $start_row, $rows, $part_file, $i, $progress_file);
+                exit(0);
+            }
+            $worker_infos[] = [
+                'pid' => $pid,
+                'file' => $part_file,
+                'rows' => $rows,
+                'progress' => $progress_file
+            ];
+            $start_row += $rows;
+        }
+
+        $failed = false;
+        $completed_rows = 0;
+        $remaining = count($worker_infos);
+        $worker_map = [];
+        foreach ($worker_infos as $info) {
+            $worker_map[$info['pid']] = $info['rows'];
+        }
+
+        while ($remaining > 0) {
+            $status = 0;
+            $pid = pcntl_waitpid(-1, $status, WNOHANG);
+            if ($pid > 0) {
+                $remaining--;
+                if (isset($worker_map[$pid])) {
+                    $completed_rows += $worker_map[$pid];
+                }
+                if ($status !== 0) {
+                    $failed = true;
+                }
+            }
+
+            if (!$quiet && $this->is_tty) {
+                $generated_rows = 0;
+                foreach ($worker_infos as $info) {
+                    $raw = @file_get_contents($info['progress']);
+                    if ($raw !== false) {
+                        $raw = trim($raw);
+                        if ($raw !== '' && preg_match('/^\d+$/', $raw)) {
+                            $generated_rows += (int)$raw;
+                        }
+                    }
+                }
+                $progress = sprintf("\r%-80s\r", "");
+                $progress .= sprintf(
+                    "Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... %d%%",
+                    round(min($generated_rows, $total) * 100 / $total)
+                );
+                ConsoleOutput::write($progress);
+            }
+
+            if ($remaining > 0) {
+                usleep(200000);
+            }
+        }
+
+        if ($failed) {
+            foreach ($worker_infos as $info) {
+                if (file_exists($info['file'])) {
+                    unlink($info['file']);
+                }
+                if (file_exists($info['progress'])) {
+                    unlink($info['progress']);
+                }
+            }
+            throw new Exception("ERROR: Cache generation failed");
+        }
+
+        $cache_file = fopen($this->cache_file_name, 'w');
+        if (!$cache_file) {
+            throw new Exception("ERROR: Cannot create cache file");
+        }
+
+        $queries = [];
+        foreach ($worker_infos as $info) {
+            $part = fopen($info['file'], 'r');
+            if (!$part) {
+                fclose($cache_file);
+                throw new Exception("ERROR: Cannot read cache part");
+            }
+            while (($line = fgets($part)) !== false) {
+                $line = rtrim($line, "\r\n");
+                if ($line === '') {
+                    continue;
+                }
+                fwrite($cache_file, $line . "\n");
+                $queries[] = rtrim($line, ';');
+            }
+            fclose($part);
+            unlink($info['file']);
+            if (file_exists($info['progress'])) {
+                unlink($info['progress']);
+            }
+        }
+
+        fclose($cache_file);
+        if (!$quiet) {
+            if ($this->is_tty) {
+                ConsoleOutput::write(sprintf("\r%-80s\r", ""));
+            }
+            ConsoleOutput::writeLine(sprintf("Process {$this->process_index}: Generating new data cache {$this->cache_file_name} ... 100%%"));
+        }
+
+        return $queries;
     }
     
     /**
@@ -510,6 +653,104 @@ class QueryGenerator {
         }
         
         return $queries;
+    }
+
+    private function runCacheWorker($load_index, $start_row, $rows, $cache_file_name, $worker_index, $progress_file) {
+        srand(42 + $worker_index);
+        if (function_exists('mt_srand')) {
+            mt_srand(42 + $worker_index);
+        }
+
+        $this->initializeIncrementCountersForRange($load_index, $start_row);
+
+        $cache_file = fopen($cache_file_name, 'w');
+        if (!$cache_file) {
+            exit(1);
+        }
+
+        $c = 0;
+        $batch = [];
+        $base_query = null;
+        $batch_size = $this->load_infos[$load_index]['is_batch_compatible'] ? $this->config->get('batch-size') : 1;
+
+        $progress_step = 1000;
+        while ($c < $rows) {
+            $stop_requested = ord(shmop_read($this->stop_shm_id, 0, 1)) === 1;
+            if ($stop_requested) {
+                fclose($cache_file);
+                unlink($cache_file_name);
+                if ($progress_file) {
+                    @file_put_contents($progress_file, (string)$c);
+                }
+                exit(0);
+            }
+
+            $query = $this->generateSingleQueryForLoad($load_index);
+
+            if ($this->load_infos[$load_index]['is_batch_compatible'] && $batch_size > 1) {
+                if ($base_query === null) {
+                    if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
+                        $base_query = $matches[1];
+                        $batch[] = "(" . $matches[2] . ")";
+                    }
+                } else {
+                    if (preg_match('/VALUES\s*\((.*)\)/i', $query, $matches)) {
+                        $batch[] = "(" . $matches[1] . ")";
+                    }
+                }
+
+                if (count($batch) == $batch_size) {
+                    $full_query = $base_query . implode(",", $batch);
+                    fwrite($cache_file, $full_query . ";\n");
+                    $batch = [];
+                }
+            } else {
+                fwrite($cache_file, $query . ";\n");
+            }
+
+            $c++;
+            if ($progress_file && ($c % $progress_step === 0)) {
+                @file_put_contents($progress_file, (string)$c);
+            }
+        }
+
+        if (!empty($batch)) {
+            $full_query = $base_query . implode(",", $batch);
+            fwrite($cache_file, $full_query . "\n");
+        }
+
+        fclose($cache_file);
+        if ($progress_file) {
+            @file_put_contents($progress_file, (string)$rows);
+        }
+        exit(0);
+    }
+
+    private function initializeIncrementCountersForRange($load_index, $start_row) {
+        $occurrence_counts = [];
+        foreach ($this->load_infos[$load_index]['pattern_occurrences'] as $occurrence) {
+            $pattern_text = $occurrence['text'];
+            $pattern = $this->load_infos[$load_index]['patterns'][$pattern_text];
+            if ($pattern['type'] !== 'increment') {
+                continue;
+            }
+            $key = json_encode($pattern);
+            if (!isset($occurrence_counts[$key])) {
+                $occurrence_counts[$key] = [
+                    'pattern' => $pattern,
+                    'count_per_row' => 0
+                ];
+            }
+            $occurrence_counts[$key]['count_per_row']++;
+        }
+
+        foreach ($occurrence_counts as $key => $info) {
+            if (!isset($this->increment_counters[$load_index])) {
+                $this->increment_counters[$load_index] = [];
+            }
+            $start = $info['pattern']['start'] ?? 1;
+            $this->increment_counters[$load_index][$key] = $start - 1 + ($start_row * $info['count_per_row']);
+        }
     }
 
     /**

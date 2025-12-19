@@ -32,6 +32,7 @@ class Configuration implements ArrayAccess {
         'threads:',
         'total:',
         'iterations:',
+        'cache-gen-workers:',
         'verbose',
         'quiet',
         'json',
@@ -58,6 +59,7 @@ class Configuration implements ArrayAccess {
         'wait' => false,
         'no-color' => false,
         'latency-histograms' => true,
+        'cache-gen-workers' => 1,
         'delay' => 0
     ];
 
@@ -99,7 +101,7 @@ class Configuration implements ArrayAccess {
         $process_options = [];
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
-            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay'
+            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers'
         ];
         $index = 1;
         
@@ -236,7 +238,7 @@ class Configuration implements ArrayAccess {
                 $process['drop-table'] = true;
             }
             
-            foreach (['port', 'total', 'iterations'] as $key) {
+            foreach (['port', 'total', 'iterations', 'cache-gen-workers'] as $key) {
                 if (isset($process[$key])) {
                     $process[$key] = (int)$process[$key];
                 }
@@ -320,6 +322,10 @@ class Configuration implements ArrayAccess {
                 }
             }
 
+            if (isset($process['cache-gen-workers']) && $process['cache-gen-workers'] <= 0) {
+                die("ERROR: Parameter --cache-gen-workers must be a positive number for process " . $index . "\n");
+            }
+
             // Validate threads array
             if (isset($process['threads'])) {
                 foreach ($process['threads'] as $thread_count) {
@@ -400,6 +406,8 @@ class Configuration implements ArrayAccess {
             "  --latency-histograms=[0|1]   Use histogram-based latency tracking (default: 1)\n" .
             "                               1: memory-efficient but approximate percentiles\n" .
             "                               0: precise percentiles but higher memory usage\n" .
+            "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
+            "                               (default: 1)\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
             "                               Each section after --together can have its own process-specific\n" .

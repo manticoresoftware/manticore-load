@@ -80,6 +80,26 @@ if ($shm_key === -1) {
     $shm_key = 0x742E; // Arbitrary but unique key
 }
 
+// Clean up stale shared memory and semaphore segments from previous runs
+function cleanupIpc($shm_key, $stop_shm_key, $sem_key) {
+    $keys = [$shm_key, $stop_shm_key];
+    foreach ($keys as $key) {
+        $shm = @shmop_open($key, "w", 0, 0);
+        if ($shm !== false) {
+            @shmop_delete($shm);
+            @shmop_close($shm);
+        }
+    }
+    $sem = @sem_get($sem_key, 1, 0644, 1);
+    if ($sem !== false) {
+        @sem_remove($sem);
+    }
+}
+
+$stop_shm_key = ftok(__FILE__, 'x');
+$sem_key = ftok(__FILE__, 's');
+cleanupIpc($shm_key, $stop_shm_key, $sem_key);
+
 // Calculate required bytes: 1 byte for total processes, then 2 bytes per process (1 for ready, 1 for start signal)
 $num_processes = count($processes);
 $shm_size = 1 + ($num_processes * 2);
@@ -95,7 +115,6 @@ if ($sem_id === false) {
     die("Failed to create semaphore\n");
 }
 
-$stop_shm_key = ftok(__FILE__, 'x');
 $stop_shm_id = shmop_open($stop_shm_key, "c", 0644, 1);  // 1 byte for stop flag
 if ($stop_shm_id === false) {
     die("Failed to create stop signal shared memory segment\n");
@@ -105,14 +124,44 @@ shmop_write($stop_shm_id, "\0", 0);
 
 // This function waits for an idle mysql connection for the $query, runs it and exits
 function process($query, &$all_links, &$requests, &$statistics, $delay) {
-    global $stop_shm_id;
+    global $stop_shm_id, $config;
+
+    $is_gone_away = function($e) {
+        $code = (int)$e->getCode();
+        if ($code === 2006 || $code === 2013) {
+            return true;
+        }
+        $msg = strtolower($e->getMessage());
+        return strpos($msg, 'server has gone away') !== false || strpos($msg, 'lost connection') !== false;
+    };
+
+    $reconnect = function($index) use (&$all_links, &$requests, $config) {
+        if (isset($all_links[$index]) && $all_links[$index]) {
+            @mysqli_close($all_links[$index]);
+        }
+        $link = @mysqli_connect($config->get('host'), '', '', '', $config->get('port'));
+        if (!$link) {
+            return false;
+        }
+        $all_links[$index] = $link;
+        $requests[$index] = null;
+        return true;
+    };
 
     try {
         // initialize all connections by sending first queries
         foreach ($all_links as $k=>$link) {
             if (@$requests[$k]) continue;
             $start_time = microtime(true);
-            mysqli_query($link, $query, MYSQLI_ASYNC);
+            try {
+                mysqli_query($link, $query, MYSQLI_ASYNC);
+            } catch (mysqli_sql_exception $e) {
+                if ($is_gone_away($e) && $reconnect($k)) {
+                    mysqli_query($all_links[$k], $query, MYSQLI_ASYNC);
+                } else {
+                    throw $e;
+                }
+            }
             // Store both query start time and delay end time
             @$requests[$k] = [
                 'start_time' => $start_time,
@@ -158,7 +207,15 @@ function process($query, &$all_links, &$requests, &$statistics, $delay) {
                 if (($requests[$i]['readiness'] & 3) === 3) {
                     $latency = $current_time - $requests[$i]['start_time'];
                     $statistics->addLatency($latency * 1000);
-                    mysqli_query($all_links[$i], $query, MYSQLI_ASYNC);
+                    try {
+                        mysqli_query($all_links[$i], $query, MYSQLI_ASYNC);
+                    } catch (mysqli_sql_exception $e) {
+                        if ($is_gone_away($e) && $reconnect($i)) {
+                            mysqli_query($all_links[$i], $query, MYSQLI_ASYNC);
+                        } else {
+                            throw $e;
+                        }
+                    }
                     $requests[$i] = [
                         'start_time' => $current_time,
                         'delay_until' => $current_time + $delay,

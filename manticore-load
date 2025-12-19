@@ -570,12 +570,14 @@ function run_process($process_config, $config, $process_index, $num_processes) {
 
     // Create statistics instance for this process
     $load_commands = $process_config['load_commands'] ?? $process_config['load_command'];
+    $has_multiple_loads = is_array($load_commands) && count($load_commands) > 1;
     $statistics = new Statistics(
         $process_config['threads'],
         $process_config['batch-size'],
         Configuration::isInsertQuery($load_commands),
         $config,
-        $process_index
+        $process_index,
+        $has_multiple_loads
     );
 
     // Create progress display instance
@@ -584,7 +586,8 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         count($batches), 
         Configuration::isInsertQuery($load_commands),
         $config->get('latency-histograms'),
-        $statistics
+        $statistics,
+        $has_multiple_loads
     );
 
     // Synchronization: Signal readiness and wait for start

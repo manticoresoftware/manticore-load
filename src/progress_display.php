@@ -52,6 +52,7 @@ class ProgressDisplay {
     private float $last_update_time;
     private int $last_processed_batches = 0;
     private float $start_time;
+    private bool $has_multiple_loads;
 
     private static ?array $prev_values = null;
     private static ?float $prev_time = null;
@@ -78,12 +79,13 @@ class ProgressDisplay {
      * @param bool $use_histograms Whether histograms are enabled
      * @param ?object $statistics Statistics collector object
      */
-    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics) {
+    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics, bool $has_multiple_loads = false) {
         $this->quiet = $quiet;
         $this->total_batches = $total_batches;
         $this->is_insert = $is_insert;
         $this->use_histograms = $use_histograms;
         $this->statistics = $statistics;
+        $this->has_multiple_loads = $has_multiple_loads;
         $this->start_time = microtime(true);
         $this->last_update_time = $this->start_time;
 
@@ -172,15 +174,23 @@ class ProgressDisplay {
         $load_stats->addQps($qps);
         $progress = $this->total_batches > 0 ? round($processed_batches * 100 / $this->total_batches) . "%" : "N/A";
         
-        $total_docs = $processed_batches * ($this->is_insert ? $batch_size : 1);
-        $dps = $interval_elapsed > 0 ? ($total_docs / $interval_elapsed) : 0;
+        $dps_display = "-";
+        if ($this->is_insert) {
+            if ($this->has_multiple_loads) {
+                $dps_display = "N/A";
+            } else {
+                $total_docs = $processed_batches * $batch_size;
+                $dps = $interval_elapsed > 0 ? ($total_docs / $interval_elapsed) : 0;
+                $dps_display = $dps >= 1000 ? sprintf("%.1fK", $dps/1000/$total_elapsed) : sprintf("%.0f", $dps/$total_elapsed);
+            }
+        }
         
         $stats = [
             'time' => date('H:i:s'),
             'elapsed' => $total_elapsed,
             'progress' => $progress,
             'qps' => (string)$qps,
-            'dps' => $this->is_insert ? ($dps >= 1000 ? sprintf("%.1fK", $dps/1000/$total_elapsed) : sprintf("%.0f", $dps/$total_elapsed)) : "-",
+            'dps' => $dps_display,
         ];
 
         $this->last_update_time = $now;

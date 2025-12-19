@@ -26,6 +26,7 @@ class Statistics {
     private $use_histograms;          // Controls which latency tracking method to use
     private $config;                  // Configuration object
     private $process_index;           // Process index
+    private $has_multiple_loads;      // Whether multiple load commands are configured
     private static $header_shown = false; // Static flag to track if header has been shown
 
     /**
@@ -35,7 +36,7 @@ class Statistics {
      * @param bool $is_insert_query Whether tracking inserts (true) or reads (false)
      * @param Configuration $config Configuration object
      */
-    public function __construct($threads, $batch_size, $is_insert_query, $config, $process_index) {
+    public function __construct($threads, $batch_size, $is_insert_query, $config, $process_index, $has_multiple_loads = false) {
         $this->start_time = microtime(true);
         $this->threads = $threads;
         $this->batch_size = $batch_size;
@@ -43,6 +44,7 @@ class Statistics {
         $this->use_histograms = $config->get('latency-histograms');
         $this->config = $config;
         $this->process_index = $process_index;
+        $this->has_multiple_loads = $has_multiple_loads;
         
         if ($this->use_histograms) {
             $this->latency_histogram = new LatencyHistogram();
@@ -176,12 +178,19 @@ class Statistics {
             }
         }
 
+        $total_operations = $this->completed_operations;
+        $operations_per_second = $total_time > 0 ? round($this->completed_operations / $total_time) : 0;
+        if ($this->is_insert_query && $this->has_multiple_loads) {
+            $total_operations = "N/A";
+            $operations_per_second = "N/A";
+        }
+
         $data = [
             'threads' => $this->threads,
             'batch_size' => $this->batch_size,
             'time' => sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
-            'total_operations' => $this->completed_operations,
-            'operations_per_second' => $total_time > 0 ? round($this->completed_operations / $total_time) : 0,
+            'total_operations' => $total_operations,
+            'operations_per_second' => $operations_per_second,
             'qps' => [
                 'avg' => $qps_stats['avg'],
                 'p99' => $qps_stats['p99'],
@@ -268,11 +277,15 @@ class Statistics {
             $values[] = $threads;
             $values[] = $batch_size;
             
-            $format .= "%-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
+            $format .= "%-12s; %-12s; %-12s; %-12d; %-12d; %-12d; %-12d; %-12d; %-12.1f; %-12.1f; %-12.1f; %-12.1f;\n";
+            $total_docs_display = $this->has_multiple_loads ? "N/A" : (string)$this->completed_operations;
+            $docs_per_sec_display = $this->has_multiple_loads
+                ? "N/A"
+                : (string)($total_time > 0 ? round($this->completed_operations / $total_time) : 0);
             $values = array_merge($values, [
                 sprintf("%02d:%02d", (int)($total_time/60), (int)$total_time%60),
-                $this->completed_operations,
-                $total_time > 0 ? round($this->completed_operations / $total_time) : 0,
+                $total_docs_display,
+                $docs_per_sec_display,
                 $qps_stats['avg'], $qps_stats['p99'], $qps_stats['p95'],
                 $qps_stats['p5'], $qps_stats['p1'],
                 $this->getLatencyStats()['avg'],
@@ -363,9 +376,11 @@ class Statistics {
         $output .= sprintf("Batch size:       %d\n", $this->batch_size);
         
         if ($this->is_insert_query) {
-            $output .= sprintf("Total docs:       %d\n", $this->completed_operations);
+            $total_docs_display = $this->has_multiple_loads ? "N/A" : (string)$this->completed_operations;
             $total_docs_per_sec = $total_time > 0 ? round($this->completed_operations / $total_time) : 0;
-            $output .= sprintf("Docs per sec avg: %d\n", $total_docs_per_sec);
+            $docs_per_sec_display = $this->has_multiple_loads ? "N/A" : (string)$total_docs_per_sec;
+            $output .= sprintf("Total docs:       %s\n", $total_docs_display);
+            $output .= sprintf("Docs per sec avg: %s\n", $docs_per_sec_display);
             
             $output .= sprintf("QPS avg:          %d\n", $qps_stats['avg']);
             $output .= sprintf("QPS 1p:           %d\n", $qps_stats['p1']);

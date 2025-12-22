@@ -560,7 +560,7 @@ class ProgressDisplay {
                                     'cpu' => sprintf("%.4s", self::getCpuUsage()),
                                     'workers' => (string)$tableStats['thread_count'],
                                     'disk_chunks' => (string)$tableStats['disk_chunks'],
-                                    'is_optimizing' => $tableStats['is_optimizing'] ? "yes" : "",
+                                    'is_optimizing' => !empty($tableStats['is_optimizing']),
                                     'disk_bytes' => $tableStats['disk_bytes'],
                                     'indexed_documents' => $tableStats['indexed_documents']
                                 ]);
@@ -614,9 +614,7 @@ class ProgressDisplay {
                         }
                         return 0;
                     }, array_keys($stats), $stats)),
-                    'is_optimizing' => array_reduce($stats, function($carry, $item) {
-                        return $carry || $item['is_optimizing'];
-                    }, false),
+                    'merging' => self::getMergingDisplay($monitoringStats, $stats),
                     'size' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
                         $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
                         if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
@@ -666,9 +664,7 @@ class ProgressDisplay {
                         }
                         return 0;
                     }, array_keys(self::$lastKnownStats), self::$lastKnownStats)),
-                    'is_optimizing' => array_reduce(self::$lastKnownStats, function($carry, $item) {
-                        return $carry || $item['is_optimizing'];
-                    }, false),
+                    'merging' => self::getMergingDisplay($monitoringStats, self::$lastKnownStats),
                     'size' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
                         $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
                         if ($processConfig && in_array($processConfig['load_type'], ['insert', 'replace'])) {
@@ -692,7 +688,7 @@ class ProgressDisplay {
                     'cpu' => 'N/A',
                     'workers' => '-',
                     'chunks' => 0,
-                    'is_optimizing' => '',
+                    'merging' => '',
                     'size' => 0,
                     'inserted' => 0
                 ];
@@ -717,7 +713,7 @@ class ProgressDisplay {
                 self::colorize(str_pad($combinedStats['cpu'], $widths['cpu']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
-                self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),
+                self::colorize(str_pad($combinedStats['merging'], $widths['merging']), self::COLOR_RED),
                 self::colorize(str_pad(self::formatBytes($combinedStats['size']), $widths['size']), self::COLOR_YELLOW),
                 self::colorize(str_pad(self::formatNumber($combinedStats['inserted']), $widths['inserted']), self::COLOR_YELLOW)
             ]);
@@ -748,5 +744,32 @@ class ProgressDisplay {
             return sprintf("%.1fK", $number / 1000);
         }
         return (string)$number;
+    }
+
+    private static function getMergingDisplay($monitoringStats, $statsFallback) {
+        $optimizing = 0;
+        $total = 0;
+        $has_counts = false;
+
+        foreach ($monitoringStats as $tableStats) {
+            if ($tableStats['merging_total'] !== null && $tableStats['merging_optimizing'] !== null) {
+                $has_counts = true;
+                $optimizing += (int)$tableStats['merging_optimizing'];
+                $total += (int)$tableStats['merging_total'];
+            }
+        }
+
+        if ($has_counts) {
+            if ($total === 0) {
+                return "0%";
+            }
+            return sprintf("%.0f%%", ($optimizing / $total) * 100);
+        }
+
+        $is_optimizing = array_reduce($statsFallback, function($carry, $item) {
+            return $carry || (!empty($item['is_optimizing']));
+        }, false);
+
+        return $is_optimizing ? "yes" : "";
     }
 }

@@ -541,6 +541,8 @@ class MonitoringStats {
         $thread_count = 0;
         $disk_chunks = 0;
         $is_optimizing = 0;
+        $merging_optimizing = null;
+        $merging_total = null;
         $disk_bytes = 0;
         $ram_bytes = 0;
         $indexed_documents = 0;
@@ -565,6 +567,23 @@ class MonitoringStats {
                         }
                     }
                     mysqli_free_result($result);
+                }
+
+                try {
+                    $status_query = "SELECT optimizing, COUNT(*) AS cnt FROM {$this->table_name}.@status GROUP BY optimizing";
+                    $result = mysqli_query($this->connection, $status_query);
+                    if ($result) {
+                        $counts = [0 => 0, 1 => 0];
+                        while ($row = mysqli_fetch_assoc($result)) {
+                            $optimizing_key = (int)$row['optimizing'];
+                            $counts[$optimizing_key] = (int)$row['cnt'];
+                        }
+                        mysqli_free_result($result);
+                        $merging_optimizing = $counts[1];
+                        $merging_total = $counts[0] + $counts[1];
+                    }
+                } catch (mysqli_sql_exception $e) {
+                    // Optional @status query failed, fall back to simple optimizing flag.
                 }
             }
         } catch (mysqli_sql_exception $e) {
@@ -595,7 +614,9 @@ class MonitoringStats {
             'is_optimizing' => $is_optimizing,
             'disk_bytes' => $disk_bytes,
             'ram_bytes' => $ram_bytes,
-            'indexed_documents' => $indexed_documents
+            'indexed_documents' => $indexed_documents,
+            'merging_optimizing' => $merging_optimizing,
+            'merging_total' => $merging_total
         ];
     }
 

@@ -74,6 +74,9 @@ foreach ($required_files as $file) {
     require_once findRequiredFile($file);
 }
 
+// Remove any stale console output semaphore from previous runs
+ConsoleOutput::cleanupStale();
+
 // Global variables
 $stop_requested = false;
 
@@ -385,6 +388,8 @@ foreach ($child_pids as $pid => $process_index) {
         $exit_code = 1;
     }
 }
+
+ConsoleOutput::cleanupStale();
 
 exit($exit_code);
 

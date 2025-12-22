@@ -17,6 +17,47 @@ Source code available at: https://github.com/manticoresoftware/manticore-load
 class ConsoleOutput {
     /** @var resource|null Semaphore resource for synchronizing output */
     private static $semaphore = null;
+    /** @var int|null Cached semaphore key */
+    private static $sem_key = null;
+
+    /**
+     * Returns a user-specific semaphore key to avoid cross-user collisions.
+     *
+     * @return int
+     */
+    private static function getSemaphoreKey() {
+        if (self::$sem_key !== null) {
+            return self::$sem_key;
+        }
+
+        $base_key = ftok(__FILE__, 'o');
+        if ($base_key === -1) {
+            $base_key = 0x6f03;
+        }
+
+        $uid = 0;
+        if (function_exists('posix_geteuid')) {
+            $uid = posix_geteuid();
+        } elseif (function_exists('getmyuid')) {
+            $uid = getmyuid();
+        }
+
+        self::$sem_key = ($base_key ^ ($uid & 0xFFFF)) & 0x7fffffff;
+        return self::$sem_key;
+    }
+
+    /**
+     * Removes the semaphore to clear stale IPC state.
+     *
+     * @return void
+     */
+    public static function cleanupStale() {
+        $sem_key = self::getSemaphoreKey();
+        $sem = @sem_get($sem_key, 1, 0644, 1);
+        if ($sem !== false) {
+            @sem_remove($sem);
+        }
+    }
     
     /**
      * Initializes the output semaphore for thread-safe console writing
@@ -27,8 +68,7 @@ class ConsoleOutput {
      */
     public static function init() {
         if (self::$semaphore === null) {
-            // Generate a unique key based on this file
-            $sem_key = ftok(__FILE__, 'o');
+            $sem_key = self::getSemaphoreKey();
             // Create/get semaphore with read/write permissions
             self::$semaphore = sem_get($sem_key, 1, 0644, 1);
             if (self::$semaphore === false) {

@@ -393,7 +393,7 @@ class QueryGenerator {
                     'type' => 'float',
                     'min' => (float)$parts[1],
                     'max' => (float)$parts[2],
-                    'decimals' => 1
+                    'decimals' => 8
                 ];
                 
             case 'boolean':
@@ -470,9 +470,10 @@ class QueryGenerator {
                 return rand($pattern['min'] ?? 0, $pattern['max'] ?? PHP_INT_MAX);
                 
             case 'float':
-                $scale = pow(10, $pattern['decimals'] ?? 1);
+                $decimals = $pattern['decimals'] ?? 8;
+                $scale = pow(10, $decimals);
                 return round(rand($pattern['min'] * $scale ?? 0, $pattern['max'] * $scale ?? PHP_INT_MAX) / $scale, 
-                            $pattern['decimals'] ?? 1);
+                            $decimals);
                 
             case 'boolean':
                 return rand(0, 1);
@@ -489,7 +490,7 @@ class QueryGenerator {
                     return round(
                         $pattern['min_value'] + 
                         mt_rand() / mt_getrandmax() * ($pattern['max_value'] - $pattern['min_value']), 
-                        2
+                        8
                     );
                 }, range(1, $size)));
                 

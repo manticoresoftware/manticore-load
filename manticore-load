@@ -67,7 +67,9 @@ $required_files = [
     'query_generator.php',
     'statistics.php',
     'progress_display.php',
-    'console_output.php'
+    'console_output.php',
+    'elasticsearch_client.php',
+    'elasticsearch_query_generator.php',
 ];
 
 foreach ($required_files as $file) {
@@ -283,6 +285,26 @@ function terminateChildren($child_pids) {
     }
 }
 
+if (count($processes) === 1 && $config->get('elasticsearch')) {
+    $process_index = 1;
+    $process_config = $processes[1];
+    foreach ($process_config['threads'] as $threads) {
+        foreach ($process_config['batch-size'] as $batch_size) {
+            $process_config_copy = $process_config;
+            $process_config_copy['threads'] = $threads;
+            $process_config_copy['batch-size'] = $batch_size;
+            if (!$config->get('quiet')) {
+                $load_commands = $process_config['load_commands'] ?? $process_config['load_command'] ?? null;
+                $is_insert = Configuration::isElasticsearchIndexLoad($load_commands);
+                $batch_size_info = $is_insert ? ", batch-size=$batch_size" : "";
+                echo "======================================================================================\n";
+                echo "Process $process_index: Running with threads=$threads$batch_size_info\n";
+            }
+            run_process($process_config_copy, $config, $process_index, 1);
+        }
+    }
+    $child_pids = [];
+} else {
 foreach ($processes as $process_index => $process_config) {
     $pid = pcntl_fork();
     
@@ -306,7 +328,9 @@ foreach ($processes as $process_index => $process_config) {
                     
                     if (!$config->get('quiet')) {
                         $load_commands = $process_config['load_commands'] ?? $process_config['load_command'] ?? null;
-                        $is_insert = Configuration::isInsertQuery($load_commands);
+                        $is_insert = $config->get('elasticsearch')
+                            ? Configuration::isElasticsearchIndexLoad($load_commands)
+                            : Configuration::isInsertQuery($load_commands);
                         $batch_size_info = $is_insert ? ", batch-size=$batch_size" : "";
                         echo "======================================================================================\n";
                         echo "Process $process_index: Running with threads=$threads$batch_size_info\n";
@@ -322,17 +346,21 @@ foreach ($processes as $process_index => $process_config) {
         }
     }
 }
+}
 
-// After forking processes, in the parent process
+// After forking processes, in the parent process (or single-process ES: no children)
 if ($parent_pid === getmypid()) {
     // Collect child PIDs
     $childPids = [];
     foreach ($child_pids as $pid => $process_index) {
         $childPids[] = $pid;
     }
-    
-    // Wait for all children to be ready
-    while (true) {
+
+    // Only wait for ready and monitor when we actually forked children (multi-process).
+    // Single-process Elasticsearch runs in main process and never signals ready.
+    if (!empty($child_pids)) {
+        // Wait for all children to be ready
+        while (true) {
         // Check if any child has terminated
         foreach ($child_pids as $pid => $process_index) {
             $res = pcntl_waitpid($pid, $status, WNOHANG);
@@ -368,9 +396,10 @@ if ($parent_pid === getmypid()) {
         usleep(100);  // Sleep for 100us
         pcntl_signal_dispatch();
     }
-    
-    // Start monitoring progress files
-    ProgressDisplay::monitorProgressFiles($childPids, $config);
+
+        // Start monitoring progress files
+        ProgressDisplay::monitorProgressFiles($childPids, $config);
+    }
 
     // Clean up shared memory and semaphore (only in parent process)
     shmop_delete($shm_id);
@@ -395,6 +424,11 @@ exit($exit_code);
 
 // Main process execution function
 function run_process($process_config, $config, $process_index, $num_processes) {
+    if ($config->get('elasticsearch')) {
+        run_process_elasticsearch($process_config, $config, $process_index, $num_processes);
+        return;
+    }
+
     global $shm_id, $sem_id, $stop_shm_id;
     
     // Clone configuration for this specific process
@@ -723,5 +757,318 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $statistics->printReport($process_info);
 
     // Clean up progress display temp file
+    $progress->cleanup();
+}
+
+/**
+ * Elasticsearch mode: run process with ES client, JSON init/load, bulk/search requests.
+ */
+function run_process_elasticsearch($process_config, $config, $process_index, $num_processes) {
+    global $shm_id, $sem_id, $stop_shm_id;
+
+    $process_configuration = new Configuration([]);
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'elasticsearch', 'index', 'cache-from-disk', 'cache-gen-workers'];
+    foreach ($global_settings as $setting) {
+        $val = $config->get($setting);
+        if ($val !== null) {
+            $process_configuration->set($setting, $val);
+        }
+    }
+    foreach ($process_config as $key => $value) {
+        $process_configuration->set($key, $value);
+    }
+    $load_commands = $process_config['load_commands'] ?? $process_config['load'] ?? $process_config['load_command'] ?? null;
+    if ($load_commands !== null) {
+        $load_commands = is_array($load_commands) ? $load_commands : [$load_commands];
+        $process_configuration->set('load_commands', $load_commands);
+        $process_configuration->set('load_command', $load_commands[0] ?? null);
+    }
+    if (isset($process_config['load_distribution'])) {
+        $process_configuration->set('load-distribution', $process_config['load_distribution']);
+    }
+    $process_configuration->set('process_index', $process_index);
+
+    $host = $config->get('host');
+    $port = $config->get('port');
+    $threads = is_array($process_config['threads']) ? $process_config['threads'][0] : (int)$process_config['threads'];
+    $batch_size = is_array($process_config['batch-size']) ? $process_config['batch-size'][0] : (int)$process_config['batch-size'];
+    $total = (int)$process_config['total'];
+
+    $index_name = $config->get('index');
+    if ($index_name === null && isset($process_config['init_command']) && $process_config['init_command'] !== '') {
+        $decoded = json_decode(trim($process_config['init_command']), true);
+        if (is_array($decoded) && !empty($decoded['path'])) {
+            $index_name = trim($decoded['path'], '/');
+        }
+    }
+
+    $num_slots = max(1, (int)$threads);
+    $es_client = new ElasticsearchClient(
+        $host,
+        $port,
+        $num_slots,
+        $config->get('user'),
+        $config->get('password')
+    );
+
+    if (!empty($process_config['drop']) && $index_name !== null && $index_name !== '') {
+        if (!$config->get('quiet')) {
+            ConsoleOutput::writeLine("Process $process_index: Deleting index: $index_name");
+        }
+        try {
+            $res = $es_client->request('DELETE', $index_name);
+            if ($res['status'] >= 400 && $res['status'] !== 404) {
+                if (!$config->get('quiet')) {
+                    echo "Process $process_index WARNING: Delete index returned " . $res['status'] . ": " . substr($res['body'], 0, 200) . "\n";
+                }
+            }
+        } catch (Exception $e) {
+            echo "Process $process_index failed: Error deleting index: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+    }
+
+    if (isset($process_config['init_command']) && $process_config['init_command'] !== '') {
+        $init_str = trim($process_config['init_command']);
+        $decoded = json_decode($init_str, true);
+        if (is_array($decoded)) {
+            $method = isset($decoded['method']) ? strtoupper($decoded['method']) : 'PUT';
+            $path = isset($decoded['path']) ? $decoded['path'] : '/' . $index_name;
+            $body = isset($decoded['body']) ? (is_string($decoded['body']) ? $decoded['body'] : json_encode($decoded['body'])) : null;
+            if ($body === null && isset($decoded['body'])) {
+                $body = json_encode($decoded['body']);
+            }
+            if (!$config->get('quiet')) {
+                echo "Process $process_index: Executing init: $method $path\n";
+            }
+            try {
+                $res = $es_client->request($method, ltrim($path, '/'), $body);
+                if ($res['status'] >= 400) {
+                    echo "Process $process_index failed: Init returned " . $res['status'] . ": " . substr($res['body'], 0, 500) . "\n";
+                    exit(1);
+                }
+            } catch (Exception $e) {
+                echo "Process $process_index failed: Init error: " . $e->getMessage() . "\n";
+                exit(1);
+            }
+        } else {
+            if ($index_name === null || $index_name === '') {
+                die("ERROR: In --elasticsearch mode, init JSON must have \"method\" and \"path\" or set --index for PUT body.\n");
+            }
+            if (!$config->get('quiet')) {
+                echo "Process $process_index: Executing init: PUT /$index_name\n";
+            }
+            try {
+                $res = $es_client->request('PUT', $index_name, $init_str);
+                if ($res['status'] >= 400) {
+                    echo "Process $process_index failed: Init returned " . $res['status'] . ": " . substr($res['body'], 0, 500) . "\n";
+                    exit(1);
+                }
+            } catch (Exception $e) {
+                echo "Process $process_index failed: Init error: " . $e->getMessage() . "\n";
+                exit(1);
+            }
+        }
+    }
+
+    if ($index_name === null || $index_name === '') {
+        die("ERROR: In --elasticsearch mode, set --index=NAME or provide init with \"path\":\"/index_name\".\n");
+    }
+
+    $es_query_generator = new ElasticsearchQueryGenerator($process_configuration, __FILE__);
+    $is_index_load = Configuration::isElasticsearchIndexLoad($load_commands);
+
+    $monitoring = new MonitoringStatsES($host, $port, $index_name, $config->get('user'), $config->get('password'));
+
+    $batches = $es_query_generator->getQueries($index_name, $config->get('quiet'));
+    $total_batches = count($batches);
+
+    $load_commands_arr = $process_config['load_commands'] ?? $process_config['load_command'];
+    $has_multiple_loads = is_array($load_commands_arr) && count($load_commands_arr) > 1;
+    $statistics = new Statistics(
+        $threads,
+        $batch_size,
+        $is_index_load,
+        $config,
+        $process_index,
+        $has_multiple_loads
+    );
+    $progress = new ProgressDisplay(
+        $process_config['quiet'] ?? false,
+        $total_batches,
+        $is_index_load,
+        $config->get('latency-histograms'),
+        $statistics,
+        $has_multiple_loads,
+        $num_processes === 1  // single process: print progress to stdout (no parent monitor)
+    );
+
+    if ($num_processes > 1) {
+        if (!sem_acquire($sem_id)) {
+            throw new Exception("Failed to acquire semaphore");
+        }
+        $ready_offset = 1 + $process_index;
+        shmop_write($shm_id, "\1", $ready_offset);
+        sem_release($sem_id);
+
+        while (true) {
+            if (!sem_acquire($sem_id)) {
+                throw new Exception("Failed to acquire semaphore");
+            }
+            $start_offset = 1 + $num_processes + ($process_index - 1);
+            $start_signal = ord(shmop_read($shm_id, $start_offset, 1));
+            sem_release($sem_id);
+            if ($start_signal === 1) {
+                break;
+            }
+            usleep(100);
+            pcntl_signal_dispatch();
+        }
+    }
+
+    $processed_batches = 0;
+    $progress_updated = microtime(true);
+    $delay = (float)($process_configuration->get('delay') ?? 0);
+    $ops_per_batch = $is_index_load ? $batch_size : 1;
+    $path = $is_index_load ? '_bulk' : $index_name . '/_search';
+    $content_type = $is_index_load ? 'application/x-ndjson' : 'application/json';
+
+    $recordCompletion = function ($result) use ($es_client, $statistics, $ops_per_batch, $is_index_load, $config, $process_index, $delay, &$processed_batches, $progress, $batch_size, $monitoring, &$progress_updated) {
+        $statistics->addLatency($result['latency_ms']);
+        $statistics->addOperations($ops_per_batch);
+        $processed_batches++;
+        if ($result['status'] >= 400 && !$config->get('quiet')) {
+            echo "Process $process_index WARNING: Request returned " . $result['status'] . ": " . substr($result['body'], 0, 200) . "\n";
+        }
+        if ($is_index_load && $result['status'] === 200 && $result['body'] !== '' && !$config->get('quiet')) {
+            $bulk = json_decode($result['body'], true);
+            if (is_array($bulk) && !empty($bulk['errors'])) {
+                $shown = 0;
+                $max_show = 3;
+                foreach (isset($bulk['items']) ? $bulk['items'] : [] as $item) {
+                    if ($shown >= $max_show) break;
+                    $err = $item['index']['error'] ?? null;
+                    if (is_array($err)) {
+                        echo "Process $process_index WARNING: bulk item error: " . json_encode($err) . "\n";
+                        $shown++;
+                    }
+                }
+                if ($shown > 0) {
+                    echo "Process $process_index WARNING: bulk batch had errors (first $shown shown). Check index mapping and document format.\n";
+                }
+            }
+        }
+        if ($delay > 0) {
+            usleep((int)($delay * 1000000));
+        }
+        if ((microtime(true) - $progress_updated) >= 1.0) {
+            $progress->update($processed_batches, $batch_size, $monitoring, $statistics);
+            $progress_updated = microtime(true);
+        }
+    };
+
+    $batch_index = 0;
+    foreach ($batches as $body) {
+        $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+        if ($stop_requested) {
+            if (!$config->get('quiet')) {
+                ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
+            }
+            break;
+        }
+        while (($slot_id = $es_client->getFreeSlotId()) < 0) {
+            try {
+                $result = $es_client->waitForOne();
+                $recordCompletion($result);
+            } catch (Exception $e) {
+                echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+                break 2;
+            }
+        }
+        try {
+            $es_client->startRequest($slot_id, 'POST', $path, $body, $content_type);
+        } catch (Exception $e) {
+            echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+            break;
+        }
+        $batch_index++;
+    }
+
+    while ($es_client->hasInFlight()) {
+        try {
+            $result = $es_client->waitForOne();
+            $recordCompletion($result);
+        } catch (Exception $e) {
+            echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+            break;
+        }
+    }
+
+    // Wait for index refresh and for merging to finish (Elasticsearch --wait)
+    if ($config->get('wait') && $is_index_load && (!isset($stop_requested) || !$stop_requested)) {
+        try {
+            $res = $es_client->request('POST', $index_name . '/_refresh');
+            if ($res['status'] >= 400 && !$config->get('quiet')) {
+                echo "Process $process_index WARNING: Refresh returned " . $res['status'] . ": " . substr($res['body'], 0, 200) . "\n";
+            }
+        } catch (Exception $e) {
+            if (!$config->get('quiet')) {
+                echo "Process $process_index WARNING: Refresh failed: " . $e->getMessage() . "\n";
+            }
+        }
+        // Poll until index stats show no merges in progress (same source as progress "Merging" column)
+        $wait_merge_timeout = 300;
+        $wait_merge_start = time();
+        while (true) {
+            if (isset($stop_requested) && $stop_requested) {
+                break;
+            }
+            if (time() - $wait_merge_start >= $wait_merge_timeout) {
+                if (!$config->get('quiet')) {
+                    echo "Process $process_index WARNING: Merge wait timed out after {$wait_merge_timeout}s.\n";
+                }
+                break;
+            }
+            try {
+                $res = $es_client->request('GET', $index_name . '/_stats?metric=merge');
+                if ($res['status'] >= 400) {
+                    break;
+                }
+                $data = json_decode($res['body'], true);
+                $merges_current = 0;
+                if (is_array($data) && isset($data['_all']['primaries']['merges']['current'])) {
+                    $merges_current = (int)$data['_all']['primaries']['merges']['current'];
+                }
+                if ($merges_current === 0) {
+                    break;
+                }
+            } catch (Exception $e) {
+                if (!$config->get('quiet')) {
+                    echo "Process $process_index WARNING: Stats check failed: " . $e->getMessage() . "\n";
+                }
+                break;
+            }
+            if (!$config->get('quiet')) {
+                $progress->update($processed_batches, $batch_size, $monitoring, $statistics);
+            }
+            sleep(1);
+            if (function_exists('pcntl_signal_dispatch')) {
+                pcntl_signal_dispatch();
+            }
+        }
+    }
+
+    $es_client->close();
+    $monitoring->close();
+
+    $process_info = [
+        'quiet' => $config->get('quiet'),
+        'json' => $config->get('json'),
+        'init_command' => $process_config['init_command'] ?? null,
+        'load_command' => $process_config['load_commands'] ?? $process_config['load_command'],
+        'column' => $process_config['column'] ?? null,
+        'process_index' => $process_index
+    ];
+    $statistics->printReport($process_info);
     $progress->cleanup();
 }

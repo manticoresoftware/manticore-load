@@ -60,6 +60,9 @@ class ProgressDisplay {
     private $tempFile;
     private string $tempFilePath;
 
+    /** When true, this process prints progress to stdout (no parent monitor). Used for single-process Elasticsearch. */
+    private bool $single_process_display;
+
     // Add new class property to track processed lines
     private static $processedLines = [];
 
@@ -78,14 +81,16 @@ class ProgressDisplay {
      * @param bool $is_insert Whether operation is insert (vs update)
      * @param bool $use_histograms Whether histograms are enabled
      * @param ?object $statistics Statistics collector object
+     * @param bool $single_process_display When true, print progress to stdout (no parent monitor)
      */
-    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics, bool $has_multiple_loads = false) {
+    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics, bool $has_multiple_loads = false, bool $single_process_display = false) {
         $this->quiet = $quiet;
         $this->total_batches = $total_batches;
         $this->is_insert = $is_insert;
         $this->use_histograms = $use_histograms;
         $this->statistics = $statistics;
         $this->has_multiple_loads = $has_multiple_loads;
+        $this->single_process_display = $single_process_display;
         $this->start_time = microtime(true);
         $this->last_update_time = $this->start_time;
 
@@ -152,7 +157,14 @@ class ProgressDisplay {
         
         $header_length = strlen(sprintf(self::$PROGRESS_FORMAT, ...array_map(function($h) {
             return preg_replace('/\033\[\d+m/', '', $h);
-        }, $headers)));        
+        }, $headers)));
+
+        // In single-process mode (e.g. Elasticsearch), this process prints the header; no parent monitor.
+        if ($this->single_process_display) {
+            echo str_repeat("-", $header_length - 1) . "\n";
+            printf(self::$PROGRESS_FORMAT, ...$headers);
+            echo str_repeat("-", $header_length - 1) . "\n";
+        }
     }
 
     /**
@@ -199,6 +211,32 @@ class ProgressDisplay {
         if (!$this->quiet) {
             $this->saveProgress($stats);
         }
+
+        // In single-process mode, print progress line to stdout (no parent reading the temp file).
+        if (!$this->quiet && $this->single_process_display && $common_monitoring !== null) {
+            $monitoringStats = $common_monitoring->getStats();
+            $cpu = self::getCpuUsage();
+            $workers = (string)($monitoringStats['thread_count'] ?? 0);
+            $chunks = (string)($monitoringStats['disk_chunks'] ?? 0);
+            $merging = !empty($monitoringStats['is_optimizing']) ? 'yes' : '';
+            $size = (int)($monitoringStats['disk_bytes'] ?? 0);
+            $inserted = (int)($monitoringStats['indexed_documents'] ?? 0);
+            $line = $this->formatProgressLine(
+                $stats['time'],
+                $stats['elapsed'],
+                $stats['progress'],
+                $stats['qps'],
+                $stats['dps'],
+                $cpu,
+                $workers,
+                $chunks,
+                $merging,
+                0,
+                $size,
+                $inserted
+            );
+            echo $line;
+        }
     }
 
     private function formatProgressLine($time, $elapsed, $progress, $qps, $dps, $cpu, $workers, $chunks, $merging, $write_speed, $size, $docs) {
@@ -216,16 +254,14 @@ class ProgressDisplay {
         $workers = self::colorize(str_pad($workers, $widths[6]), self::COLOR_YELLOW);
         $chunks = self::colorize(str_pad($chunks, $widths[7]), self::COLOR_YELLOW);
         $merging = $merging ? self::colorize(str_pad($merging, $widths[8]), self::COLOR_RED) : str_pad($merging, $widths[8]);
-        $write_speed = self::colorize(str_pad($write_speed, $widths[9]), self::COLOR_YELLOW);
-        $size = self::colorize(str_pad($size, $widths[10]), self::COLOR_YELLOW);
-        $docs = self::colorize(str_pad($docs, $widths[11]), self::COLOR_YELLOW);
-        
+        $sizeDisplay = self::colorize(str_pad(self::formatBytes($size), $widths[9]), self::COLOR_YELLOW);
+        $docsDisplay = self::colorize(str_pad(self::formatNumber($docs), $widths[10]), self::COLOR_YELLOW);
+
         return sprintf(self::$PROGRESS_FORMAT,
             $time, $elapsed, $progress, $qps, $dps, $cpu, $workers,
-            $chunks, $merging, 
-            self::formatBytes($write_speed),
-            self::formatBytes($size),
-            self::formatNumber($docs)
+            $chunks, $merging,
+            $sizeDisplay,
+            $docsDisplay
         );
     }
 

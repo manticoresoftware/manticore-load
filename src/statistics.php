@@ -606,3 +606,132 @@ class MonitoringStats {
         mysqli_close($this->connection);
     }
 }
+
+/**
+ * Elasticsearch monitoring: uses HTTP to _nodes/stats and index _stats
+ * to expose the same getStats() shape as MonitoringStats for progress display.
+ */
+class MonitoringStatsES {
+    private $baseUrl;
+    private $indexName;
+    private $last_disk_time;
+    private $size_samples = [];
+    private $sample_window = 5;
+    private $authHeader;
+
+    public function __construct($host, $port, $index_name = null, $user = null, $password = null) {
+        $this->baseUrl = 'http://' . $host . ':' . (int)$port;
+        $this->indexName = $index_name;
+        $this->last_disk_time = microtime(true);
+        $this->authHeader = null;
+        if ($user !== null && $user !== '') {
+            $this->authHeader = 'Authorization: Basic ' . base64_encode($user . ':' . ($password ?? ''));
+        }
+    }
+
+    /**
+     * Send HTTP GET request and return [body, status_code].
+     */
+    private function httpGet($path) {
+        $url = $this->baseUrl . '/' . ltrim($path, '/');
+        $headers = ['Content-Type: application/json'];
+        if ($this->authHeader !== null) {
+            $headers[] = $this->authHeader;
+        }
+        $ctx = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers),
+                'timeout' => 5.0,
+                'ignore_errors' => true,
+            ]
+        ]);
+        $body = @file_get_contents($url, false, $ctx);
+        $status = 200;
+        if (isset($http_response_header) && is_array($http_response_header) && isset($http_response_header[0])) {
+            if (preg_match('/HTTP\/\d\.\d\s+(\d+)/', $http_response_header[0], $m)) {
+                $status = (int)$m[1];
+            }
+        }
+        return [$body !== false ? $body : '', $status];
+    }
+
+    /**
+     * Returns the same keys as MonitoringStats::getStats() for ProgressDisplay compatibility.
+     * Disk = index store size on disk (primaries). Small at start because ES keeps recent data
+     * in memory/translog until refresh/flush; it grows as segments are written.
+     */
+    public function getStats() {
+        $thread_count = 0;
+        $disk_chunks = 0;
+        $is_optimizing = 0;
+        $disk_bytes = 0;
+        $ram_bytes = 0;
+        $indexed_documents = 0;
+
+        try {
+            list($body, $status) = $this->httpGet('_nodes/stats');
+            if ($status === 200 && $body !== '') {
+                $data = json_decode($body, true);
+                if (is_array($data) && !empty($data['nodes'])) {
+                    foreach ($data['nodes'] as $node) {
+                        if (isset($node['thread_pool'])) {
+                            foreach ($node['thread_pool'] as $pool) {
+                                if (isset($pool['threads'])) {
+                                    $thread_count += (int)$pool['threads'];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ($this->indexName !== null && $this->indexName !== '') {
+                list($body, $status) = $this->httpGet($this->indexName . '/_stats?metric=store,docs,segments,merge');
+                if ($status === 200 && $body !== '') {
+                    $data = json_decode($body, true);
+                    if (is_array($data) && isset($data['_all']['primaries'])) {
+                        $prim = $data['_all']['primaries'];
+                        if (isset($prim['docs']['count'])) {
+                            $indexed_documents = (int)$prim['docs']['count'];
+                        }
+                        if (isset($prim['store']['size_in_bytes'])) {
+                            $disk_bytes = (int)$prim['store']['size_in_bytes'];
+                        }
+                        // Segments (ES equivalent of Manticore disk chunks)
+                        if (isset($prim['segments']['count'])) {
+                            $disk_chunks = (int)$prim['segments']['count'];
+                        }
+                        // Merges in progress (ES equivalent of Manticore is_optimizing)
+                        if (isset($prim['merges']['current']) && (int)$prim['merges']['current'] > 0) {
+                            $is_optimizing = 1;
+                        }
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            // Leave stats at 0 on error
+        }
+
+        $now = microtime(true);
+        $this->size_samples[] = ['time' => $now, 'bytes' => $disk_bytes];
+        $cutoff_time = $now - $this->sample_window;
+        $this->size_samples = array_filter($this->size_samples, function ($s) use ($cutoff_time) {
+            return $s['time'] >= $cutoff_time;
+        });
+        $this->last_disk_time = $now;
+
+        return [
+            'thread_count' => $thread_count,
+            'disk_chunks' => $disk_chunks,
+            'is_optimizing' => $is_optimizing,
+            'disk_bytes' => $disk_bytes,
+            'ram_bytes' => $ram_bytes,
+            'indexed_documents' => $indexed_documents,
+        ];
+    }
+
+    public function close() {
+        // No persistent connection
+    }
+}

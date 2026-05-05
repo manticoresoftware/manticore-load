@@ -118,6 +118,29 @@ $stop_shm_key = ftok(__FILE__, 'x');
 $sem_key = ftok(__FILE__, 's');
 cleanupIpc($shm_key, $stop_shm_key, $sem_key);
 
+
+function drainMysqliResults($link) {
+    while (true) {
+        if (mysqli_field_count($link) > 0) {
+            $result = @mysqli_store_result($link);
+            if ($result instanceof mysqli_result) {
+                mysqli_free_result($result);
+            }
+        }
+
+        if (!mysqli_more_results($link)) {
+            break;
+        }
+
+        if (!@mysqli_next_result($link)) {
+            if ($link->errno) {
+                throw new mysqli_sql_exception($link->error, $link->errno);
+            }
+            break;
+        }
+    }
+}
+
 // Calculate required bytes: 1 byte for total processes, then 2 bytes per process (1 for ready, 1 for start signal)
 $num_processes = count($processes);
 $shm_size = 1 + ($num_processes * 2);
@@ -211,6 +234,12 @@ function process($query, &$all_links, &$requests, &$statistics, $delay) {
                     }
                     if ($res === false and !$link->error) continue;
                     if (is_object($res)) mysqli_free_result($res);
+                    try {
+                        drainMysqliResults($link);
+                    } catch (mysqli_sql_exception $e) {
+                        echo "ERROR: {$e->getMessage()}\n";
+                        return false;
+                    }
                     $requests[$i]['readiness'] |= 1;
                 }
             }

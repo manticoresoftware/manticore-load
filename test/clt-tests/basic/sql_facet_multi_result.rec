@@ -1,0 +1,21 @@
+Test SQL FACET multi-result workloads through manticore-load.
+This verifies that manticore-load drains all result sets and does not fail with
+"Commands out of sync" when reusing MySQL connections.
+
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+./manticore-load --drop --threads=1 --batch-size=20 --total=200 --init="CREATE TABLE t(title text, color int, size int, brand int)" --load="INSERT INTO t(id,title,color,size,brand) VALUES(<increment>,'<text/2/5>',<int/1/5>,<int/1/5>,<int/1/10>)" --quiet > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+./manticore-load --threads=4 --total=200 --load="SELECT count(*) FROM t WHERE color=<int/1/5> AND size=<int/1/5> FACET color ORDER BY COUNT(*) DESC FACET size ORDER BY COUNT(*) DESC FACET brand ORDER BY COUNT(*) DESC" --quiet --json | php -r '$d=json_decode(stream_get_contents(STDIN), true); if (!is_array($d)) { fwrite(STDERR, "bad json\n"); exit(1); } echo $d["total_operations"],"\n";'
+––– output –––
+200

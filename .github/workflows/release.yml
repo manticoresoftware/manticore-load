@@ -8,6 +8,7 @@ on:
   push:
     tags:
       - 'release*'
+      - 'pack_publish'
     
 env:
   APP_NAME: 'manticore-load'

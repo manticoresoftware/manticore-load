@@ -44,6 +44,10 @@ class Configuration implements ArrayAccess {
         'together',
         'column:',
         'delay:',
+        'elasticsearch',
+        'index:',
+        'user:',
+        'password:',
     ];
     
     /** @var array Default configuration values */
@@ -62,7 +66,11 @@ class Configuration implements ArrayAccess {
         'latency-histograms' => true,
         'cache-gen-workers' => 1,
         'cache-from-disk' => false,
-        'delay' => 0
+        'delay' => 0,
+        'elasticsearch' => false,
+        'index' => null,
+        'user' => null,
+        'password' => null
     ];
 
     /** @var array Stores configurations for multiple processes */
@@ -201,6 +209,11 @@ class Configuration implements ArrayAccess {
      */
     private function initializeOptions($options) {
         $this->options = array_merge($this->defaults, $options);
+
+        // In Elasticsearch mode, default port to 9200 if still on Manticore default
+        if (!empty($this->options['elasticsearch']) && (int)$this->options['port'] === 9306) {
+            $this->options['port'] = 9200;
+        }
         
         // Parse column option if present
         if (isset($this->options['column'])) {
@@ -281,7 +294,10 @@ class Configuration implements ArrayAccess {
 
             $load_commands = $process['load_commands'] ?? (isset($process['load_command']) ? [$process['load_command']] : []);
 
-            if ($this->isInsertQuery($load_commands)) {
+            $is_insert = $this->get('elasticsearch')
+                ? $this->isElasticsearchIndexLoad($load_commands)
+                : $this->isInsertQuery($load_commands);
+            if ($is_insert) {
                 $required[] = 'batch-size';
             }
 
@@ -346,6 +362,14 @@ class Configuration implements ArrayAccess {
                     }
                 }
             }
+
+            // In Elasticsearch mode with --drop, index name must be known
+            if ($this->get('elasticsearch') && !empty($process['drop']) && empty($this->options['index'])) {
+                $init = $process['init_command'] ?? $process['init'] ?? null;
+                if (!$init || !$this->extractIndexNameFromInit($init)) {
+                    die("ERROR: In --elasticsearch mode with --drop, specify --index=NAME or provide init JSON with \"path\":\"/index_name\"\n");
+                }
+            }
         }
     }
 
@@ -359,7 +383,7 @@ class Configuration implements ArrayAccess {
 
     /**
      * Checks if a given SQL command is an INSERT or REPLACE query
-     * 
+     *
      * @param string|null $command SQL command to check
      * @return bool True if command is INSERT/REPLACE, false otherwise
      */
@@ -377,6 +401,53 @@ class Configuration implements ArrayAccess {
         }
         $command = strtolower($command);
         return strpos($command, 'insert') === 0 || strpos($command, 'replace') === 0;
+    }
+
+    /**
+     * In Elasticsearch mode, checks if load template(s) are document index (bulk) rather than search.
+     * Document templates do not have a top-level "query" key; search request bodies do.
+     *
+     * @param string|array|null $command Load template(s) (JSON string or array of strings)
+     * @return bool True if any template is document index (requires batch-size), false otherwise
+     */
+    public static function isElasticsearchIndexLoad($command = null) {
+        if ($command === null) {
+            return false;
+        }
+        $templates = is_array($command) ? $command : [$command];
+        foreach ($templates as $template) {
+            $trimmed = trim($template);
+            // Search body starts with {"query"; document body does not. Use string heuristic
+            // because templates contain placeholders like <increment> and cannot be json_decode'd.
+            if (!preg_match('/^\s*\{\s*"query"/', $trimmed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extracts index name from Elasticsearch init JSON (e.g. from "path": "/my_index").
+     *
+     * @param string $init Init command (JSON string)
+     * @return string|null Index name or null if not found
+     */
+    private function extractIndexNameFromInit($init) {
+        $decoded = json_decode(trim($init), true);
+        if (!is_array($decoded) || empty($decoded['path'])) {
+            return null;
+        }
+        $path = trim($decoded['path'], '/');
+        return $path !== '' ? $path : null;
+    }
+
+    /**
+     * Whether Elasticsearch mode is enabled.
+     *
+     * @return bool
+     */
+    public function isElasticsearchMode() {
+        return (bool) $this->get('elasticsearch');
     }
 
     /**
@@ -413,6 +484,7 @@ class Configuration implements ArrayAccess {
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
+            "  --wait                       After load, wait until Manticore optimize finishes.\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
             "                               Each section after --together can have its own process-specific\n" .
             "                               options (threads, batch-size, load, etc). Global options\n" .
@@ -440,17 +512,17 @@ class Configuration implements ArrayAccess {
             "Examples:\n\n" .
             "# Load 1M documents in batches of 1000:\n" .
             "manticore-load \\\n" .
-            "--batch-size=1000 \\\n" .
+            "--drop --batch-size=1000 \\\n" .
             "--threads=5 \\\n" .
             "--total=1000000 \\\n" .
             "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
             "--load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\"\n\n" .
             
-            "# Execute 1000 search queries:\n" .
+            "# Execute 10k search queries:\n" .
             "manticore-load \\\n" .
             "--threads=5 \\\n" .
             "--total=10000 \\\n" .
-            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n" .
+            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/3>')\"\n\n" .
            
             "# First process inserts data, second process runs queries simultaneously\n" .
             "manticore-load \\\n" .
@@ -460,7 +532,57 @@ class Configuration implements ArrayAccess {
             "--load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\" \\\n" .
             "--together \\\n" .
             "--threads=1 --total=5000 \\\n" .
-            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n"
+            "--load=\"SELECT * FROM test WHERE MATCH('<text/5/20>')\"\n\n" .
+
+            "\nElasticsearch:\n" .
+            "  --elasticsearch              Use Elasticsearch instead of Manticore. --init and --load accept JSON.\n" .
+            "                               Default port 9200.\n" .
+            "  --index=NAME                 Index name. If set, init path defaults to /NAME; omit \"path\" in init. If unset, init must have \"path\":\"/index_name\".\n" .
+            "  --user=USER                  Username for basic auth.\n" .
+            "  --password=PASS              Password for basic auth.\n" .
+            "  --wait (Elasticsearch)       After load, refresh index then wait for merging to finish.\n\n" .
+            "  With --index=NAME, init can be {\"method\":\"PUT\"}. Without --index, init must include \"path\":\"/index_name\".\n\n" .
+            "# Load 1M documents in batches of 1000:\n" .
+            "manticore-load --elasticsearch --index=test \\\n" .
+            "--host=localhost --port=9200 --user=elastic --password=password \\\n" .
+            "--drop --batch-size=1000 \\\n" .
+            "--threads=5 \\\n" .
+            "--total=1000000 \\\n" .
+            "--init='{\"method\":\"PUT\"}' \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
+
+            "# Create index with explicit schema (mappings) and load 1M docs:\n" .
+            "manticore-load --elasticsearch --index=test \\\n" .
+            "--host=localhost --port=9200 --user=elastic --password=password \\\n" .
+            "--drop --batch-size=1000 \\\n" .
+            "--threads=5 \\\n" .
+            "--total=1000000 \\\n" .
+            "--init='{\"method\":\"PUT\",\"body\":{\"mappings\":{\"properties\":{\"id\":{\"type\":\"long\"},\"name\":{\"type\":\"text\"},\"type\":{\"type\":\"integer\"}}}}}' \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
+
+            "# Execute 10k search queries:\n" .
+            "manticore-load --elasticsearch --index=test \\\n" .
+            "--host=localhost --port=9200 --user=elastic --password=password \\\n" .
+            "--threads=5 \\\n" .
+            "--total=10000 \\\n" .
+            "--load='{\"query\":{\"match\":{\"name\":\"<text/1/3>\"}}}'\n\n" .
+
+            "# First process inserts data, second process runs queries simultaneously\n" .
+            "manticore-load --elasticsearch --index=test \\\n" .
+            "--host=localhost --port=9200 --user=elastic --password=password \\\n" .
+            "--drop --batch-size=1000 --threads=4 --total=1000000 \\\n" .
+            "--init='{\"method\":\"PUT\"}' \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}' \\\n" .
+            "--together \\\n" .
+            "--threads=1 --total=5000 \\\n" .
+            "--load='{\"query\":{\"match\":{\"name\":\"<text/5/20>\"}}}'\n\n" .
+
+            "# Same as first example but without --index (index name from init \"path\"):\n" .
+            "manticore-load --elasticsearch \\\n" .
+            "--host=localhost --port=9200 --user=elastic --password=password \\\n" .
+            "--drop --batch-size=1000 --threads=5 --total=1000000 \\\n" .
+            "--init='{\"method\":\"PUT\",\"path\":\"/test\"}' \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n"
         );
     }
 

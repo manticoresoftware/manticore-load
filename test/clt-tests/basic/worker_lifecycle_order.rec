@@ -1,0 +1,130 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+./manticore-load --drop --quiet --json --threads=1 --total=1 --init="CREATE TABLE worker_lifecycle_order(value int)" --worker-init="BEGIN; INSERT INTO worker_lifecycle_order(id,value) VALUES(1,10)" --worker-finalize="INSERT INTO worker_lifecycle_order(id,value) VALUES(3,30); COMMIT" --load="INSERT INTO worker_lifecycle_order(id,value) VALUES(2,20)"
+––– output –––
+{
+    "threads": 1,
+    "batch_size": 1,
+    "time": "00:00",
+    "total_operations": 1,
+    "operations_per_second": #!/\d+/!#,
+    "qps": {
+        "avg": 0,
+        "p99": 0,
+        "p95": 0,
+        "p5": 0,
+        "p1": 0
+    },
+    "latency": {
+        "avg": #!/\d+(\.\d+)?/!#,
+        "p50": #!/\d+(\.\d+)?/!#,
+        "p95": #!/\d+(\.\d+)?/!#,
+        "p99": #!/\d+(\.\d+)?/!#
+    }
+}
+––– input –––
+mysql -h0 -P9306 -e "SELECT id,value FROM worker_lifecycle_order WHERE id=1; SELECT id,value FROM worker_lifecycle_order WHERE id=2; SELECT id,value FROM worker_lifecycle_order WHERE id=3"
+––– output –––
+id	value
+1	10
+id	value
+2	20
+id	value
+3	30
+––– input –––
+./manticore-load --drop --quiet --json --threads=4 --total=4 --init="CREATE TABLE worker_lifecycle_parallel(value int)" --worker-init="BEGIN" --worker-finalize="COMMIT" --load="INSERT INTO worker_lifecycle_parallel(id,value) VALUES(<increment>,10)"
+––– output –––
+{
+    "threads": 4,
+    "batch_size": 1,
+    "time": "00:00",
+    "total_operations": 4,
+    "operations_per_second": #!/\d+/!#,
+    "qps": {
+        "avg": 0,
+        "p99": 0,
+        "p95": 0,
+        "p5": 0,
+        "p1": 0
+    },
+    "latency": {
+        "avg": #!/\d+(\.\d+)?/!#,
+        "p50": #!/\d+(\.\d+)?/!#,
+        "p95": #!/\d+(\.\d+)?/!#,
+        "p99": #!/\d+(\.\d+)?/!#
+    }
+}
+––– input –––
+mysql -h0 -P9306 -N -e "SELECT COUNT(*),MIN(value),MAX(value) FROM worker_lifecycle_parallel"
+––– output –––
+4\t10\t10
+––– input –––
+./manticore-load --drop --threads=4 --batch-size=2 --total=8 --init="CREATE TABLE worker_lifecycle_failure(value int)" --worker-init="BEGIN" --worker-finalize="INVALID FINALIZER" --load="INSERT INTO worker_lifecycle_failure(id,value) VALUES(<increment>,10)" > /dev/null; echo $?; mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM worker_lifecycle_failure"
+––– output –––
+1
+0
+––– input –––
+./manticore-load --drop --quiet --json --threads=1 --batch-size=2 --total=4 --init="CREATE TABLE multiline_insert(value int)" --load="INSERT INTO multiline_insert(
+id,
+value
+) VALUES(
+<increment>,
+<int/1/100>
+)"
+––– output –––
+{
+    "threads": 1,
+    "batch_size": 2,
+    "time": "00:00",
+    "total_operations": 4,
+    "operations_per_second": #!/\d+/!#,
+    "qps": {
+        "avg": 0,
+        "p99": 0,
+        "p95": 0,
+        "p5": 0,
+        "p1": 0
+    },
+    "latency": {
+        "avg": #!/\d+(\.\d+)?/!#,
+        "p50": #!/\d+(\.\d+)?/!#,
+        "p95": #!/\d+(\.\d+)?/!#,
+        "p99": #!/\d+(\.\d+)?/!#
+    }
+}
+––– input –––
+mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM multiline_insert"
+––– output –––
+4
+––– input –––
+cache=$(./manticore-load --verbose --threads=1 --batch-size=2 --total=5 --init="CREATE TABLE empty_cache_regression(value int)" --load="INSERT INTO empty_cache_regression(id,value) VALUES(<increment>,<int/1/100>)" 2>&1 | sed -n 's/.*Generating new data cache \(\/tmp\/manticore_load_[a-f0-9]*\).*/\1/p' | head -1); test -n "$cache"; : > "$cache"; inode_before=$(stat -c %i "$cache"); ./manticore-load --drop --quiet --json --threads=1 --batch-size=2 --total=5 --cache-from-disk --init="CREATE TABLE empty_cache_regression(value int)" --load="INSERT INTO empty_cache_regression(id,value) VALUES(<increment>,<int/1/100>)"; inode_after=$(stat -c %i "$cache"); test "$inode_before" = "$inode_after"; test -s "$cache"; mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM empty_cache_regression"
+––– output –––
+{
+    "threads": 1,
+    "batch_size": 2,
+    "time": "00:00",
+    "total_operations": 6,
+    "operations_per_second": #!/\d+/!#,
+    "qps": {
+        "avg": 0,
+        "p99": 0,
+        "p95": 0,
+        "p5": 0,
+        "p1": 0
+    },
+    "latency": {
+        "avg": #!/\d+(\.\d+)?/!#,
+        "p50": #!/\d+(\.\d+)?/!#,
+        "p95": #!/\d+(\.\d+)?/!#,
+        "p99": #!/\d+(\.\d+)?/!#
+    }
+}
+5

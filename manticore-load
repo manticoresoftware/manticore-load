@@ -141,6 +141,68 @@ function drainMysqliResults($link) {
     }
 }
 
+function splitSqlCommands($commands) {
+    if ($commands === null || trim($commands) === '') return [];
+    $pattern = '/(?:[^;"\']|"[^"]*"|\'[^\']*\')+/';
+    preg_match_all($pattern, $commands, $matches);
+    $queries = [];
+    foreach ($matches[0] as $query) {
+        $query = trim($query);
+        if ($query !== '') $queries[] = $query;
+    }
+    return $queries;
+}
+
+function runSqlCommands($link, $commands) {
+    foreach (splitSqlCommands($commands) as $query) {
+        mysqli_query($link, $query);
+        drainMysqliResults($link);
+    }
+}
+
+function runSqlCommandsConcurrently($links, $commands) {
+    foreach (splitSqlCommands($commands) as $query) {
+        $pending = [];
+        $firstError = null;
+        foreach ($links as $i => $link) {
+            try {
+                mysqli_query($link, $query, MYSQLI_ASYNC);
+                $pending[$i] = $link;
+            } catch (Throwable $error) {
+                if ($firstError === null) $firstError = $error;
+            }
+        }
+
+        while ($pending) {
+            $ready = $errors = $reject = array_values($pending);
+            $count = mysqli_poll($ready, $errors, $reject, 1);
+            if ($count === false) {
+                throw new RuntimeException('Failed while waiting for worker lifecycle SQL');
+            }
+            if ($count === 0) continue;
+
+            foreach ($pending as $i => $link) {
+                if (!in_array($link, $ready, true) && !in_array($link, $errors, true) && !in_array($link, $reject, true)) {
+                    continue;
+                }
+
+                try {
+                    $result = mysqli_reap_async_query($link);
+                    if ($result instanceof mysqli_result) mysqli_free_result($result);
+                    if ($link->error) throw new mysqli_sql_exception($link->error, $link->errno);
+                    drainMysqliResults($link);
+                } catch (Throwable $error) {
+                    if ($firstError === null) $firstError = $error;
+                } finally {
+                    unset($pending[$i]);
+                }
+            }
+        }
+
+        if ($firstError !== null) throw $firstError;
+    }
+}
+
 // Calculate required bytes: 1 byte for total processes, then 2 bytes per process (1 for ready, 1 for start signal)
 $num_processes = count($processes);
 $shm_size = 1 + ($num_processes * 2);
@@ -399,7 +461,7 @@ if ($parent_pid === getmypid()) {
     }
     
     // Start monitoring progress files
-    ProgressDisplay::monitorProgressFiles($childPids, $config);
+    $child_statuses = ProgressDisplay::monitorProgressFiles($childPids, $config);
 
     // Clean up shared memory and semaphore (only in parent process)
     shmop_delete($shm_id);
@@ -410,8 +472,12 @@ if ($parent_pid === getmypid()) {
 // Parent process: wait for all children to complete
 $exit_code = 0;
 foreach ($child_pids as $pid => $process_index) {
-    $status = 0;
-    pcntl_waitpid($pid, $status);
+    if (isset($child_statuses[$pid])) {
+        $status = $child_statuses[$pid];
+    } else {
+        $status = 0;
+        pcntl_waitpid($pid, $status);
+    }
     if (pcntl_wexitstatus($status) != 0) {
         echo "Process $process_index failed with status " . pcntl_wexitstatus($status) . "\n";
         $exit_code = 1;
@@ -550,6 +616,10 @@ function run_process($process_config, $config, $process_index, $num_processes) {
                      (strlen($init_query) > 50 ? "..." : "") . "\": " . $e->getMessage() . "\n";
             }
         }
+    }
+
+    foreach ($all_links as $link) {
+        runSqlCommands($link, $process_config['worker_init_command'] ?? null);
     }
 
     // Extract table name from load command if not found in init command
@@ -731,6 +801,25 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         }
         $count = @mysqli_poll($links, $errors, $reject, 0, 100);
     } while (count($all_links) != count($links) + count($errors) + count($reject));
+
+    if (!empty($process_config['worker_finalize_command'])) {
+        foreach ($all_links as $i => $link) {
+            if (!isset($requests[$i]) || $requests[$i] === null) continue;
+            do {
+                $ready = [$link];
+                $errors = [$link];
+                $reject = [$link];
+                $count = mysqli_poll($ready, $errors, $reject, 1);
+            } while ($count === 0);
+            $result = mysqli_reap_async_query($link);
+            if ($result instanceof mysqli_result) mysqli_free_result($result);
+            if ($link->error) throw new mysqli_sql_exception($link->error, $link->errno);
+            drainMysqliResults($link);
+            $requests[$i] = null;
+        }
+    }
+
+    runSqlCommandsConcurrently($all_links, $process_config['worker_finalize_command'] ?? null);
 
     // Close connections
     foreach ($all_links as $link) {

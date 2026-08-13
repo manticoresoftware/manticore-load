@@ -12,6 +12,7 @@ Manticore Load Emulator is a powerful tool for testing and benchmarking Manticor
 - **Custom Query Generation:** Allows creation of dynamic queries with configurable patterns.
 - **Helpful Patterns:** Provides helpful patterns for generating random data.
 - **Batch Loading:** Efficiently handles large data insertions or replacements in batches.
+- **Worker Lifecycle SQL:** Runs setup and finalization SQL on every persistent worker connection.
 - **Progress Monitoring:** Displays real-time progress and detailed statistics.
 - **Flexible Configuration:** Configurable via command-line arguments for convenience.
 - **Latency and QPS Tracking:** Tracks latency percentiles and queries-per-second (QPS) for performance insights.
@@ -79,6 +80,26 @@ manticore-load \
 ```
 
 ### Advanced Examples
+
+#### Worker Connection Setup and Finalization
+
+Run SQL on each persistent worker connection before the workload starts and after its final asynchronous query completes:
+
+```bash
+manticore-load \
+  --threads=1 \
+  --batch-size=1000 \
+  --total=1000000 \
+  --drop \
+  --init="CREATE TABLE test(name text)" \
+  --worker-init="SET indexer_rt_bulk=1; BEGIN" \
+  --worker-finalize="COMMIT" \
+  --load="INSERT INTO test(id,name) VALUES(<increment>,'<text/10/100>')"
+```
+
+`--worker-init` and `--worker-finalize` accept semicolon-separated SQL. Each command is executed in order on every workload connection. Worker initialization runs after `--init` and before timed workload execution. Worker finalization runs after every connection's last asynchronous workload query has completed and before final statistics are reported. Each finalization statement is sent to all workers concurrently before the next statement is sent, so operations such as `COMMIT` or `FLUSH RAMCHUNK` are included in total elapsed time without serializing one worker's finalization behind another.
+
+Use `--threads=1` when benchmarking one connection-scoped transaction. With multiple threads, each worker gets its own transaction and runs its own finalization command. For assisted indexer ingestion, each successful worker transaction attaches one disk chunk, so `N` workers normally produce `N` chunks. Use the same `optimize_cutoff` on every table when comparing modes to avoid including chunk merging on only one side.
 
 #### Mixed Workload Example
 
@@ -295,6 +316,8 @@ Note: The `--json` option can only be used with `--quiet`. If used without `--qu
 | `--load`         | SQL command template for the workload (repeatable)  |
 | `--load-distribution` | Comma-separated weights for multiple `--load` values (default: even split) |
 | `--init`         | Initial SQL commands (e.g., `CREATE TABLE`)         |
+| `--worker-init`  | Semicolon-separated SQL run on every worker connection after initialization and before workload execution |
+| `--worker-finalize` | Semicolon-separated SQL run on every worker after its last query completes and before reporting |
 | `--drop`         | Drop the table before starting (applies to target table only) |
 | `--delay`        | Delay in seconds between queries (default: 0)  |
 | `--cache-gen-workers` | Number of worker processes for cache generation (default: 1) |

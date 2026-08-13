@@ -340,8 +340,10 @@ class ProgressDisplay {
      */
     public static function monitorProgressFiles($pids, $config) {
         if (empty($pids)) {
-            return;
+            return [];
         }
+
+        $exitStatuses = [];
 
         $linesBeforeHeader = 20;
         $linesPrinted = 0;
@@ -482,10 +484,15 @@ class ProgressDisplay {
             $runningPids = [];
             // Check which processes are still running
             foreach ($pids as $pid) {
+                if (isset($exitStatuses[$pid])) {
+                    continue;
+                }
                 $status = 0;
                 $res = pcntl_waitpid($pid, $status, WNOHANG);
                 if ($res === 0) {  // Process is still running
                     $runningPids[] = $pid;
+                } elseif ($res > 0) {
+                    $exitStatuses[$pid] = $status;
                 }
             }
             
@@ -503,7 +510,7 @@ class ProgressDisplay {
                 foreach ($monitoring as $monitor) {
                     $monitor->close();
                 }
-                break;
+                return $exitStatuses;
             }
             
             // Try to read new lines from each process file

@@ -524,7 +524,7 @@ class QueryGenerator {
      * @return array Array of generated queries
      */
     public function generateQueries($quiet = false) {
-        if (!file_exists($this->cache_file_name)) {
+        if (!file_exists($this->cache_file_name) || filesize($this->cache_file_name) === 0) {
             return $this->generateAndCacheQueries($quiet);
         } else {
             if (!$quiet) ConsoleOutput::writeLine("Process {$this->process_index}: Using cached data from: {$this->cache_file_name}");
@@ -798,12 +798,12 @@ class QueryGenerator {
             
             if ($this->load_infos[$load_index]['is_batch_compatible'] && $batch_size > 1) {
                 if ($base_query === null) {
-                    if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $base_query = $matches[1];
                         $batch[] = "(" . $matches[2] . ")";
                     }
                 } else {
-                    if (preg_match('/VALUES\s*\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch[] = "(" . $matches[1] . ")";
                     }
                 }
@@ -890,12 +890,12 @@ class QueryGenerator {
 
             if ($this->load_infos[$load_index]['is_batch_compatible'] && $batch_size > 1) {
                 if ($base_query === null) {
-                    if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $base_query = $matches[1];
                         $batch[] = "(" . $matches[2] . ")";
                     }
                 } else {
-                    if (preg_match('/VALUES\s*\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch[] = "(" . $matches[1] . ")";
                     }
                 }
@@ -1034,12 +1034,12 @@ class QueryGenerator {
 
             if ($load_info['is_batch_compatible'] && $batch_size > 1) {
                 if ($batch_buffers[$load_index]['base_query'] === null) {
-                    if (preg_match('/(.*VALUES\s*)\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $batch_buffers[$load_index]['base_query'] = $matches[1];
                         $batch_buffers[$load_index]['batch'][] = "(" . $matches[2] . ")";
                     }
                 } else {
-                    if (preg_match('/VALUES\s*\((.*)\)/i', $query, $matches)) {
+                    if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch_buffers[$load_index]['batch'][] = "(" . $matches[1] . ")";
                     }
                 }
@@ -1122,8 +1122,7 @@ class QueryGenerator {
             );
         }
         
-        rtrim($query, ';');
-        return $query;
+        return preg_replace('/\s+/', ' ', trim(rtrim($query, ';')));
     }
 
     /**

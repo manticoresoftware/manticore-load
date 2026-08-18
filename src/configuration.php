@@ -25,6 +25,8 @@ class Configuration implements ArrayAccess {
         'host:',
         'port:',
         'init:',
+        'worker-init:',
+        'worker-finalize:',
         'load:',
         'load-distribution:',
         'drop::',
@@ -103,7 +105,7 @@ class Configuration implements ArrayAccess {
         $process_options = [];
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
-            'iterations', 'init', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
+            'iterations', 'init', 'worker-init', 'worker-finalize', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
             'cache-from-disk'
         ];
         $index = 1;
@@ -235,6 +237,12 @@ class Configuration implements ArrayAccess {
             
             if (isset($process['init'])) {
                 $process['init_command'] = $process['init'];
+            }
+            if (isset($process['worker-init'])) {
+                $process['worker_init_command'] = $process['worker-init'];
+            }
+            if (isset($process['worker-finalize'])) {
+                $process['worker_finalize_command'] = $process['worker-finalize'];
             }
 
             if (isset($process['drop'])) {
@@ -404,6 +412,8 @@ class Configuration implements ArrayAccess {
             "  --host=HOST                  Manticore host (default: 127.0.0.1)\n" .
             "  --port=PORT                  Manticore port (default: 9306)\n" .
             "  --init=SQL                   SQL command to execute before loading (e.g., CREATE TABLE)\n" .
+            "  --worker-init=SQL            Semicolon-separated SQL run on each worker connection before timing\n" .
+            "  --worker-finalize=SQL        Semicolon-separated SQL run on each worker connection before reporting\n" .
             "  --drop                       Drop table if exists\n" .
             "  --verbose                    Show prepared queries before execution\n" .
             "  --latency-histograms=[0|1]   Use histogram-based latency tracking (default: 1)\n" .

@@ -1,0 +1,45 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+./manticore-load --drop --quiet --json --threads=1 --batch-size=2 --total=4 --init="CREATE TABLE worker_lifecycle(value int)" --worker-init="BEGIN" --worker-finalize="COMMIT" --load="INSERT INTO worker_lifecycle(id,value) VALUES(<increment>,<int/1/100>)"
+––– output –––
+{
+    "threads": 1,
+    "batch_size": 2,
+    "time": "00:00",
+    "total_operations": 4,
+    "operations_per_second": #!/\d+/!#,
+    "qps": {
+        "avg": 0,
+        "p99": 0,
+        "p95": 0,
+        "p5": 0,
+        "p1": 0
+    },
+    "latency": {
+        "avg": #!/\d+(\.\d+)?/!#,
+        "p50": #!/\d+(\.\d+)?/!#,
+        "p95": #!/\d+(\.\d+)?/!#,
+        "p99": #!/\d+(\.\d+)?/!#
+    }
+}
+––– input –––
+mysql -h0 -P9306 -e "SELECT COUNT(*) FROM worker_lifecycle; SHOW TABLE worker_lifecycle STATUS LIKE 'ram_chunk_segments_count'"
+––– output –––
++----------+
+| count(*) |
++----------+
+|        4 |
++----------+
++--------------------------+-------+
+| Variable_name            | Value |
++--------------------------+-------+
+| ram_chunk_segments_count | 1     |
++--------------------------+-------+

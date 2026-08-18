@@ -33,7 +33,13 @@ cd /manticore-load
 ––– input –––
 mysql -h0 -P9306 -e "SELECT COUNT(*) FROM worker_lifecycle; SHOW TABLE worker_lifecycle STATUS LIKE 'ram_chunk_segments_count'"
 ––– output –––
-COUNT(*)
-4
-Variable_name	Value
-ram_chunk_segments_count	2
++----------+
+| count(*) |
++----------+
+|        4 |
++----------+
++--------------------------+-------+
+| Variable_name            | Value |
++--------------------------+-------+
+| ram_chunk_segments_count | 1     |
++--------------------------+-------+

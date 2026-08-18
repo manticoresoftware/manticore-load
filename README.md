@@ -92,14 +92,14 @@ manticore-load \
   --total=1000000 \
   --drop \
   --init="CREATE TABLE test(name text)" \
-  --worker-init="SET indexer_rt_bulk=1; BEGIN" \
+  --worker-init="BEGIN" \
   --worker-finalize="COMMIT" \
   --load="INSERT INTO test(id,name) VALUES(<increment>,'<text/10/100>')"
 ```
 
 `--worker-init` and `--worker-finalize` accept semicolon-separated SQL. Each command is executed in order on every workload connection. Worker initialization runs after `--init` and before timed workload execution. Worker finalization runs after every connection's last asynchronous workload query has completed and before final statistics are reported. Each finalization statement is sent to all workers concurrently before the next statement is sent, so operations such as `COMMIT` or `FLUSH RAMCHUNK` are included in total elapsed time without serializing one worker's finalization behind another.
 
-Use `--threads=1` when benchmarking one connection-scoped transaction. With multiple threads, each worker gets its own transaction and runs its own finalization command. For assisted indexer ingestion, each successful worker transaction attaches one disk chunk, so `N` workers normally produce `N` chunks. Use the same `optimize_cutoff` on every table when comparing modes to avoid including chunk merging on only one side.
+Use `--threads=1` when benchmarking one connection-scoped transaction. With multiple threads, each worker gets its own transaction and runs its own finalization command.
 
 #### Mixed Workload Example
 

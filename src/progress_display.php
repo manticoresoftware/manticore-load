@@ -60,7 +60,7 @@ class ProgressDisplay {
     private $tempFile;
     private string $tempFilePath;
 
-    /** When true, this process prints progress to stdout (no parent monitor). Used for single-process Elasticsearch. */
+    /** When true, this process prints progress to stdout (no parent monitor). Used for single-process Elasticsearch/HTTP. */
     private bool $single_process_display;
 
     // Add new class property to track processed lines
@@ -159,7 +159,7 @@ class ProgressDisplay {
             return preg_replace('/\033\[\d+m/', '', $h);
         }, $headers)));
 
-        // In single-process mode (e.g. Elasticsearch), this process prints the header; no parent monitor.
+        // In single-process mode (e.g. Elasticsearch/HTTP), this process prints the header; no parent monitor.
         if ($this->single_process_display) {
             echo str_repeat("-", $header_length - 1) . "\n";
             printf(self::$PROGRESS_FORMAT, ...$headers);

@@ -46,6 +46,8 @@ class Configuration implements ArrayAccess {
         'together',
         'column:',
         'delay:',
+        'http',
+        'index:',
     ];
     
     /** @var array Default configuration values */
@@ -64,7 +66,9 @@ class Configuration implements ArrayAccess {
         'latency-histograms' => true,
         'cache-gen-workers' => 1,
         'cache-from-disk' => false,
-        'delay' => 0
+        'delay' => 0,
+        'http' => false,
+        'index' => null,
     ];
 
     /** @var array Stores configurations for multiple processes */
@@ -203,6 +207,11 @@ class Configuration implements ArrayAccess {
      */
     private function initializeOptions($options) {
         $this->options = array_merge($this->defaults, $options);
+
+        // In Manticore HTTP mode, default port to 9308 if still on MySQL default
+        if (!empty($this->options['http']) && (int)$this->options['port'] === 9306) {
+            $this->options['port'] = 9308;
+        }
         
         // Parse column option if present
         if (isset($this->options['column'])) {
@@ -289,7 +298,12 @@ class Configuration implements ArrayAccess {
 
             $load_commands = $process['load_commands'] ?? (isset($process['load_command']) ? [$process['load_command']] : []);
 
-            if ($this->isInsertQuery($load_commands)) {
+            if ($this->get('http')) {
+                $is_insert = $this->isManticoreHttpIndexLoad($load_commands);
+            } else {
+                $is_insert = $this->isInsertQuery($load_commands);
+            }
+            if ($is_insert) {
                 $required[] = 'batch-size';
             }
 
@@ -354,6 +368,24 @@ class Configuration implements ArrayAccess {
                     }
                 }
             }
+
+            // In --http mode with --drop, table name must be known
+            if ($this->get('http') && !empty($process['drop']) && empty($this->options['index'])) {
+                $init = $process['init_command'] ?? $process['init'] ?? null;
+                $table = $init ? $this->extractTableNameFromSql($init) : null;
+                if (!$table) {
+                    die("ERROR: In --http mode with --drop, specify --index=NAME or provide --init with CREATE TABLE name\n");
+                }
+            }
+
+            // Worker lifecycle hooks are MySQL-connection scoped; not supported with --http
+            if ($this->get('http')) {
+                $has_worker_hooks = !empty($process['worker-init']) || !empty($process['worker_init_command'])
+                    || !empty($process['worker-finalize']) || !empty($process['worker_finalize_command']);
+                if ($has_worker_hooks) {
+                    die("ERROR: --worker-init/--worker-finalize are not supported with --http (MySQL mode only)\n");
+                }
+            }
         }
     }
 
@@ -383,8 +415,51 @@ class Configuration implements ArrayAccess {
             }
             return false;
         }
-        $command = strtolower($command);
+        $command = ltrim(strtolower($command));
         return strpos($command, 'insert') === 0 || strpos($command, 'replace') === 0;
+    }
+
+
+    /**
+     * In --http mode, checks if load template(s) are document bulk rather than search.
+     * Search bodies include a "query" key; document templates do not.
+     *
+     * @param string|array|null $command Load template(s)
+     * @return bool
+     */
+    public static function isManticoreHttpIndexLoad($command = null) {
+        if ($command === null) {
+            return false;
+        }
+        $templates = is_array($command) ? $command : [$command];
+        foreach ($templates as $template) {
+            if (!preg_match('/"query"\s*:/', $template)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extracts table name from CREATE TABLE SQL.
+     *
+     * @param string $sql
+     * @return string|null
+     */
+    private function extractTableNameFromSql($sql) {
+        if (preg_match('/create\s+table\s+(?:if\s+not\s+exists\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i', $sql, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
+    /**
+     * Whether Manticore HTTP JSON mode is enabled.
+     *
+     * @return bool
+     */
+    public function isHttpMode() {
+        return (bool) $this->get('http');
     }
 
     /**
@@ -447,6 +522,25 @@ class Configuration implements ArrayAccess {
             "  <array/2/10/100/1000>        Array of 2-10 elements, values 100-1000\n" .
             "  <array_float/256/512/0/1>    Array of 256-512 random floats, values between 0 and 1\n\n" .
             
+            
+            "\nManticore HTTP (JSON API):\n" .
+            "  --http                       Use Manticore HTTP JSON API instead of MySQL protocol.\n" .
+            "                               --init/--drop use SQL over /sql; --load uses JSON.\n" .
+            "                               Default port 9308.\n" .
+            "  --index=NAME                 Table name for /bulk and monitoring. If unset, taken from CREATE TABLE in --init.\n" .
+            "  --wait (--http)              After load, wait until table optimize finishes.\n" .
+            "  --worker-init/--worker-finalize are MySQL-only (not supported with --http).\n\n" .
+            "  --load for writes is a document template (id optional); requests go to /bulk.\n" .
+            "  --load for reads is a full /search JSON body (must include \"query\").\n\n" .
+            "# Load 1M documents in batches of 1000 over HTTP:\n" .
+            "manticore-load --http --index=test --port=9308 \\\n" .
+            "--drop --batch-size=1000 --threads=5 --total=1000000 \\\n" .
+            "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
+            "# Execute 10k search queries over HTTP:\n" .
+            "manticore-load --http --index=test --port=9308 \\\n" .
+            "--threads=5 --total=10000 \\\n" .
+            "--load='{\"index\":\"test\",\"query\":{\"query_string\":\"<text/1/3>\"}}'\n\n" .
             "Examples:\n\n" .
             "# Load 1M documents in batches of 1000:\n" .
             "manticore-load \\\n" .
@@ -702,15 +796,18 @@ class Configuration implements ArrayAccess {
         
         $config = $this->processes[$index];
         
-        // Extract table name from SQL queries
-        $table = '';
-        if (isset($config['load_commands'])) {
-            $table = $this->extractTableName($config['load_commands']);
-        } elseif (isset($config['load_command'])) {
-            $table = $this->extractTableName($config['load_command']);
-        }
-        if (!$table && isset($config['init_command'])) {
-            $table = $this->extractTableName($config['init_command']);
+        // Prefer --index; else extract from SQL / CREATE TABLE
+        $table = $this->get('index') ?: '';
+        if (!$table) {
+            if (isset($config['load_commands'])) {
+                $table = $this->extractTableName($config['load_commands']);
+            } elseif (isset($config['load_command'])) {
+                $table = $this->extractTableName($config['load_command']);
+            }
+            if (!$table && isset($config['init_command'])) {
+                $table = $this->extractTableName($config['init_command'])
+                    ?: ($this->extractTableNameFromSql($config['init_command']) ?: '');
+            }
         }
         
         $config['table'] = $table;

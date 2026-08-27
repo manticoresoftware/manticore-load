@@ -25,7 +25,8 @@ register_shutdown_function(function () {
     if (strpos($error['message'], 'Allowed memory size') === false) {
         return;
     }
-    if (strpos($error['message'], 'query_generator.php') === false) {
+    if (strpos($error['message'], 'query_generator.php') === false
+        && strpos($error['message'], 'manticore_http_query_generator.php') === false) {
         return;
     }
     fwrite(STDERR, "Hint: try --cache-from-disk to stream the cache instead of loading it into memory.\n");
@@ -67,7 +68,9 @@ $required_files = [
     'query_generator.php',
     'statistics.php',
     'progress_display.php',
-    'console_output.php'
+    'console_output.php',
+    'manticore_http_client.php',
+    'manticore_http_query_generator.php',
 ];
 
 foreach ($required_files as $file) {
@@ -397,7 +400,9 @@ foreach ($processes as $process_index => $process_config) {
                     
                     if (!$config->get('quiet')) {
                         $load_commands = $process_config['load_commands'] ?? $process_config['load_command'] ?? null;
-                        $is_insert = Configuration::isInsertQuery($load_commands);
+                        $is_insert = $config->get('http')
+                            ? Configuration::isManticoreHttpIndexLoad($load_commands)
+                            : Configuration::isInsertQuery($load_commands);
                         $batch_size_info = $is_insert ? ", batch-size=$batch_size" : "";
                         echo "======================================================================================\n";
                         echo "Process $process_index: Running with threads=$threads$batch_size_info\n";
@@ -490,6 +495,11 @@ exit($exit_code);
 
 // Main process execution function
 function run_process($process_config, $config, $process_index, $num_processes) {
+    if ($config->get('http')) {
+        run_process_manticore_http($process_config, $config, $process_index, $num_processes);
+        return;
+    }
+
     global $shm_id, $sem_id, $stop_shm_id;
     
     // Clone configuration for this specific process
@@ -841,5 +851,291 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $statistics->printReport($process_info);
 
     // Clean up progress display temp file
+    $progress->cleanup();
+}
+
+function run_process_manticore_http($process_config, $config, $process_index, $num_processes) {
+    global $shm_id, $sem_id, $stop_shm_id;
+
+    $process_configuration = new Configuration([]);
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'http', 'index', 'cache-from-disk', 'cache-gen-workers'];
+    foreach ($global_settings as $setting) {
+        $val = $config->get($setting);
+        if ($val !== null) {
+            $process_configuration->set($setting, $val);
+        }
+    }
+    foreach ($process_config as $key => $value) {
+        $process_configuration->set($key, $value);
+    }
+    $load_commands = $process_config['load_commands'] ?? $process_config['load'] ?? $process_config['load_command'] ?? null;
+    if ($load_commands !== null) {
+        $load_commands = is_array($load_commands) ? $load_commands : [$load_commands];
+        $process_configuration->set('load_commands', $load_commands);
+        $process_configuration->set('load_command', $load_commands[0] ?? null);
+    }
+    if (isset($process_config['load_distribution'])) {
+        $process_configuration->set('load-distribution', $process_config['load_distribution']);
+    }
+    $process_configuration->set('process_index', $process_index);
+
+    $host = $config->get('host');
+    $port = $config->get('port');
+    $threads = is_array($process_config['threads']) ? $process_config['threads'][0] : (int)$process_config['threads'];
+    $batch_size = is_array($process_config['batch-size']) ? $process_config['batch-size'][0] : (int)$process_config['batch-size'];
+
+    $table_name = $config->get('index');
+    if (($table_name === null || $table_name === '') && isset($process_config['init_command']) && $process_config['init_command'] !== '') {
+        if (preg_match('/create\s+table\s+(?:if\s+not\s+exists\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i', $process_config['init_command'], $matches)) {
+            $table_name = $matches[1];
+        }
+    }
+    if (($table_name === null || $table_name === '') && !empty($load_commands)) {
+        foreach ((array)$load_commands as $cmd) {
+            if (preg_match('/"(?:index|table)"\s*:\s*"([^"]+)"/', $cmd, $m)) {
+                $table_name = $m[1];
+                break;
+            }
+        }
+    }
+
+    $num_slots = max(1, (int)$threads);
+    $http_client = new ManticoreHttpClient($host, $port, $num_slots);
+
+    $sqlRaw = function ($sql) use ($http_client) {
+        return $http_client->request('POST', 'sql?mode=raw', $sql, 'text/plain');
+    };
+
+    if (!empty($process_config['drop'])) {
+        if ($table_name === null || $table_name === '') {
+            die("ERROR: In --http mode with --drop, specify --index=NAME or provide --init with CREATE TABLE name\n");
+        }
+        if (!$config->get('quiet')) {
+            ConsoleOutput::writeLine("Process $process_index: Dropping table: DROP TABLE IF EXISTS $table_name");
+        }
+        try {
+            $res = $sqlRaw("DROP TABLE IF EXISTS $table_name");
+            if ($res['status'] >= 400) {
+                echo "Process $process_index failed: Drop returned " . $res['status'] . ": " . substr($res['body'], 0, 500) . "\n";
+                exit(1);
+            }
+            $decoded = json_decode($res['body'], true);
+            if (is_array($decoded)) {
+                foreach ($decoded as $set) {
+                    if (!empty($set['error'])) {
+                        echo "Process $process_index failed: Error dropping table: " . $set['error'] . "\n";
+                        exit(1);
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            echo "Process $process_index failed: Error dropping table: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+    }
+
+    if (isset($process_config['init_command']) && $process_config['init_command'] !== '') {
+        $pattern = '/(?:[^;"\']|"[^"]*"|\'[^\']*\')+/';
+        preg_match_all($pattern, $process_config['init_command'], $matches);
+        foreach ($matches[0] as $init_query) {
+            $init_query = trim($init_query);
+            if ($init_query === '') {
+                continue;
+            }
+            if (!$config->get('quiet')) {
+                echo "Process $process_index: Executing init command: $init_query\n";
+            }
+            try {
+                $res = $sqlRaw($init_query);
+                if ($res['status'] >= 400) {
+                    echo "Process $process_index WARNING: Init returned " . $res['status'] . ": " . substr($res['body'], 0, 500) . "\n";
+                    continue;
+                }
+                $decoded = json_decode($res['body'], true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $set) {
+                        if (!empty($set['error'])) {
+                            echo "Process $process_index WARNING: Error executing init command \"" . substr($init_query, 0, 50) .
+                                (strlen($init_query) > 50 ? "..." : "") . "\": " . $set['error'] . "\n";
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                echo "Process $process_index WARNING: Error executing init command \"" . substr($init_query, 0, 50) .
+                    (strlen($init_query) > 50 ? "..." : "") . "\": " . $e->getMessage() . "\n";
+            }
+        }
+    }
+
+    if ($table_name === null || $table_name === '') {
+        die("ERROR: In --http mode, set --index=NAME or provide --init with CREATE TABLE name.\n");
+    }
+    if (!preg_match('/^[a-zA-Z0-9_:]+$/', $table_name)) {
+        die("Error: Invalid table name. Use only letters, numbers and underscore.\n");
+    }
+
+    $http_query_generator = new ManticoreHttpQueryGenerator($process_configuration, __FILE__);
+    $is_index_load = Configuration::isManticoreHttpIndexLoad($load_commands);
+
+    $monitoring = new MonitoringStatsHttp($host, $port, $table_name);
+
+    $batches = $http_query_generator->getQueries($table_name, $config->get('quiet'));
+    $total_batches = count($batches);
+
+    $load_commands_arr = $process_config['load_commands'] ?? $process_config['load_command'];
+    $has_multiple_loads = is_array($load_commands_arr) && count($load_commands_arr) > 1;
+    $statistics = new Statistics(
+        $threads,
+        $batch_size,
+        $is_index_load,
+        $config,
+        $process_index,
+        $has_multiple_loads
+    );
+    $progress = new ProgressDisplay(
+        $process_config['quiet'] ?? false,
+        $total_batches,
+        $is_index_load,
+        $config->get('latency-histograms'),
+        $statistics,
+        $has_multiple_loads
+    );
+
+    // Synchronization: Signal readiness and wait for start (same as MySQL path)
+    if (!sem_acquire($sem_id)) {
+        throw new Exception("Failed to acquire semaphore");
+    }
+    $ready_offset = 1 + $process_index;
+    shmop_write($shm_id, "\1", $ready_offset);
+    sem_release($sem_id);
+
+    while (true) {
+        if (!sem_acquire($sem_id)) {
+            throw new Exception("Failed to acquire semaphore");
+        }
+        $start_offset = 1 + $num_processes + ($process_index - 1);
+        $start_signal = ord(shmop_read($shm_id, $start_offset, 1));
+        sem_release($sem_id);
+        if ($start_signal === 1) {
+            break;
+        }
+        usleep(100);
+        pcntl_signal_dispatch();
+    }
+
+    $processed_batches = 0;
+    $progress_updated = microtime(true);
+    $delay = (float)($process_configuration->get('delay') ?? 0);
+    $ops_per_batch = $is_index_load ? $batch_size : 1;
+    $path = $is_index_load ? 'bulk' : 'search';
+    $content_type = $is_index_load ? 'application/x-ndjson' : 'application/json';
+
+    $recordCompletion = function ($result) use ($statistics, $ops_per_batch, $is_index_load, $config, $process_index, $delay, &$processed_batches, $progress, $batch_size, $monitoring, &$progress_updated) {
+        $statistics->addLatency($result['latency_ms']);
+        $statistics->addOperations($ops_per_batch);
+        $processed_batches++;
+        if ($result['status'] >= 400 && !$config->get('quiet')) {
+            echo "Process $process_index WARNING: Request returned " . $result['status'] . ": " . substr($result['body'], 0, 200) . "\n";
+        }
+        if ($is_index_load && $result['status'] === 200 && $result['body'] !== '' && !$config->get('quiet')) {
+            $bulk = json_decode($result['body'], true);
+            if (is_array($bulk) && !empty($bulk['errors'])) {
+                $shown = 0;
+                $max_show = 3;
+                foreach (isset($bulk['items']) ? $bulk['items'] : [] as $item) {
+                    if ($shown >= $max_show) {
+                        break;
+                    }
+                    $err = $item['insert']['error'] ?? $item['bulk']['error'] ?? null;
+                    if ($err !== null) {
+                        echo "Process $process_index WARNING: bulk item error: " . (is_string($err) ? $err : json_encode($err)) . "\n";
+                        $shown++;
+                    }
+                }
+                if ($shown > 0) {
+                    echo "Process $process_index WARNING: bulk batch had errors (first $shown shown). Check table schema and document format.\n";
+                }
+            }
+        }
+        if ($delay > 0) {
+            usleep((int)($delay * 1000000));
+        }
+        if ((microtime(true) - $progress_updated) >= 1.0) {
+            $progress->update($processed_batches, $batch_size, $monitoring, $statistics);
+            $progress_updated = microtime(true);
+        }
+    };
+
+    foreach ($batches as $body) {
+        $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+        if ($stop_requested) {
+            if (!$config->get('quiet')) {
+                ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
+            }
+            break;
+        }
+        while (($slot_id = $http_client->getFreeSlotId()) < 0) {
+            try {
+                $result = $http_client->waitForOne();
+                $recordCompletion($result);
+            } catch (Exception $e) {
+                echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+                break 2;
+            }
+        }
+        try {
+            $http_client->startRequest($slot_id, 'POST', $path, $body, $content_type);
+        } catch (Exception $e) {
+            echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+            break;
+        }
+    }
+
+    while ($http_client->hasInFlight()) {
+        try {
+            $result = $http_client->waitForOne();
+            $recordCompletion($result);
+        } catch (Exception $e) {
+            echo "ERROR Process $process_index: " . $e->getMessage() . "\n";
+            break;
+        }
+    }
+
+    // Wait until optimize finishes (same semantics as MySQL --wait)
+    if ($config->get('wait') && $is_index_load && (!isset($stop_requested) || !$stop_requested)) {
+        while (true) {
+            $per_process_stats = $monitoring->getStats();
+            if (!$config->get('quiet')) {
+                $progress->update($processed_batches, $batch_size, $monitoring, $statistics);
+            }
+            if (!$per_process_stats['is_optimizing']) {
+                break;
+            }
+            $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
+            if ($stop_requested) {
+                if (!$config->get('quiet')) {
+                    ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
+                }
+                break;
+            }
+            sleep(1);
+            if (function_exists('pcntl_signal_dispatch')) {
+                pcntl_signal_dispatch();
+            }
+        }
+    }
+
+    $http_client->close();
+    $monitoring->close();
+
+    $process_info = [
+        'quiet' => $config->get('quiet'),
+        'json' => $config->get('json'),
+        'init_command' => $process_config['init_command'] ?? null,
+        'load_command' => $process_config['load_commands'] ?? $process_config['load_command'],
+        'column' => $process_config['column'] ?? null,
+        'process_index' => $process_index
+    ];
+    $statistics->printReport($process_info);
     $progress->cleanup();
 }

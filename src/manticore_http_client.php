@@ -12,15 +12,20 @@ Source code available at: https://github.com/manticoresoftware/manticore-load
 /**
  * HTTP client for Manticore Search JSON API.
  * Supports synchronous requests (init, drop) and async pool for load (bulk/search).
+ * Easy handles are kept for the client lifetime so TCP connections are reused.
  */
 class ManticoreHttpClient {
     private $baseUrl;
     private $numSlots;
     private $multiHandle;
-    private $slots = [];  // slot_id => ['handle' => curl, 'start_time' => float]
-    private $slotHandles = [];  // curl handle => slot_id (for looking up which slot completed)
+    /** @var array slot_id => ['handle' => resource, 'start_time' => float|null] */
+    private $slots = [];
+    /** @var array curl handle id => slot_id */
+    private $slotHandles = [];
     private $authUser;
     private $authPassword;
+    /** @var resource|null Persistent handle for synchronous request() calls */
+    private $syncHandle = null;
 
     public function __construct($host, $port, $numSlots = 1, $user = null, $password = null) {
         $this->baseUrl = 'http://' . $host . ':' . (int)$port;
@@ -28,15 +33,56 @@ class ManticoreHttpClient {
         $this->authUser = $user;
         $this->authPassword = $password;
         $this->multiHandle = null;
+        $this->syncHandle = $this->createEasyHandle();
         if ($this->numSlots > 0) {
             $this->multiHandle = curl_multi_init();
             if ($this->multiHandle === false) {
                 throw new Exception("Cannot create cURL multi handle");
             }
             for ($i = 0; $i < $this->numSlots; $i++) {
-                $this->slots[$i] = ['handle' => null, 'start_time' => null];
+                $ch = $this->createEasyHandle();
+                $this->slots[$i] = ['handle' => $ch, 'start_time' => null];
+                $this->slotHandles[(int)$ch] = $i;
             }
         }
+    }
+
+    /**
+     * Create a reusable easy handle with keep-alive friendly defaults.
+     */
+    private function createEasyHandle() {
+        $ch = curl_init();
+        if ($ch === false) {
+            throw new Exception("Cannot create cURL handle");
+        }
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FORBID_REUSE => false,
+            CURLOPT_FRESH_CONNECT => false,
+            CURLOPT_TCP_NODELAY => true,
+        ];
+        if (defined('CURLOPT_TCP_KEEPALIVE')) {
+            $opts[CURLOPT_TCP_KEEPALIVE] = 1;
+        }
+        curl_setopt_array($ch, $opts);
+        return $ch;
+    }
+
+    /**
+     * Apply per-request options onto an existing easy handle.
+     */
+    private function configureHandle($ch, $method, $url, $body, $contentType, $timeout) {
+        $opts = [
+            CURLOPT_URL => $url,
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => ['Content-Type: ' . $contentType, 'Connection: keep-alive'],
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_POSTFIELDS => ($body !== null && $body !== '') ? $body : '',
+        ];
+        if ($this->authUser !== null && $this->authUser !== '') {
+            $opts[CURLOPT_USERPWD] = $this->authUser . ':' . ($this->authPassword ?? '');
+        }
+        curl_setopt_array($ch, $opts);
     }
 
     /**
@@ -49,6 +95,7 @@ class ManticoreHttpClient {
 
     /**
      * Execute a synchronous HTTP request (for init, drop, or load).
+     * Reuses a persistent easy handle across calls.
      *
      * @param string      $method      HTTP method (GET, PUT, POST, DELETE, etc.)
      * @param string      $path        Path (e.g. /my_index, /_bulk)
@@ -57,29 +104,15 @@ class ManticoreHttpClient {
      * @return array ['body' => string, 'status' => int]
      */
     public function request($method, $path, $body = null, $contentType = 'application/json') {
+        if ($this->syncHandle === null) {
+            $this->syncHandle = $this->createEasyHandle();
+        }
         $url = $this->getUrl($path);
-        $ch = curl_init($url);
-        if ($ch === false) {
-            throw new Exception("Cannot create cURL handle");
-        }
-        $opts = [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => ['Content-Type: ' . $contentType],
-            CURLOPT_TIMEOUT => 300,
-        ];
-        if ($this->authUser !== null && $this->authUser !== '') {
-            $opts[CURLOPT_USERPWD] = $this->authUser . ':' . ($this->authPassword ?? '');
-        }
-        curl_setopt_array($ch, $opts);
-        if ($body !== null && $body !== '') {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-        }
-        $response = curl_exec($ch);
-        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $errno = curl_errno($ch);
-        $error = curl_error($ch);
-        curl_close($ch);
+        $this->configureHandle($this->syncHandle, $method, $url, $body, $contentType, 300);
+        $response = curl_exec($this->syncHandle);
+        $status = (int)curl_getinfo($this->syncHandle, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($this->syncHandle);
+        $error = curl_error($this->syncHandle);
         if ($errno) {
             throw new Exception("Manticore HTTP request failed: $error");
         }
@@ -88,6 +121,7 @@ class ManticoreHttpClient {
 
     /**
      * Start an async request on the given slot (for load loop).
+     * Reuses the slot's easy handle so the TCP connection can be kept alive.
      *
      * @param int    $slotId Slot index (0 .. numSlots-1)
      * @param string $method HTTP method
@@ -102,24 +136,15 @@ class ManticoreHttpClient {
         if ($this->slots[$slotId]['start_time'] !== null) {
             throw new Exception("Slot $slotId already has a request in flight");
         }
+        $ch = $this->slots[$slotId]['handle'];
+        if ($ch === null) {
+            $ch = $this->createEasyHandle();
+            $this->slots[$slotId]['handle'] = $ch;
+            $this->slotHandles[(int)$ch] = $slotId;
+        }
         $url = $this->getUrl($path);
-        $ch = curl_init($url);
-        if ($ch === false) {
-            throw new Exception("Cannot create cURL handle");
-        }
-        $opts = [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => ['Content-Type: ' . $contentType],
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_TIMEOUT => 600,
-        ];
-        if ($this->authUser !== null && $this->authUser !== '') {
-            $opts[CURLOPT_USERPWD] = $this->authUser . ':' . ($this->authPassword ?? '');
-        }
-        curl_setopt_array($ch, $opts);
-        $this->slotHandles[(int)$ch] = $slotId;
-        $this->slots[$slotId] = ['handle' => $ch, 'start_time' => microtime(true)];
+        $this->configureHandle($ch, $method, $url, $body, $contentType, 600);
+        $this->slots[$slotId]['start_time'] = microtime(true);
         curl_multi_add_handle($this->multiHandle, $ch);
     }
 
@@ -129,6 +154,7 @@ class ManticoreHttpClient {
      * @return array ['slot_id' => int, 'body' => string, 'status' => int, 'latency_ms' => float]
      */
     public function waitForOne() {
+        $info = false;
         do {
             $status = curl_multi_exec($this->multiHandle, $running);
             if ($status !== CURLM_OK) {
@@ -155,10 +181,9 @@ class ManticoreHttpClient {
             $body = '';
         }
         $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        // Keep the easy handle alive for connection reuse; only detach from multi.
         curl_multi_remove_handle($this->multiHandle, $ch);
-        curl_close($ch);
-        unset($this->slotHandles[(int)$ch]);
-        $this->slots[$slotId] = ['handle' => null, 'start_time' => null];
+        $this->slots[$slotId]['start_time'] = null;
         return [
             'slot_id' => $slotId,
             'body' => $body,
@@ -195,18 +220,25 @@ class ManticoreHttpClient {
      * Close the multi handle and any open slots.
      */
     public function close() {
-        if ($this->multiHandle === null) {
-            return;
-        }
-        foreach ($this->slots as $slot) {
-            if ($slot['handle'] !== null) {
-                curl_multi_remove_handle($this->multiHandle, $slot['handle']);
-                curl_close($slot['handle']);
+        if ($this->multiHandle !== null) {
+            foreach ($this->slots as $slot) {
+                if ($slot['handle'] !== null) {
+                    if ($slot['start_time'] !== null) {
+                        curl_multi_remove_handle($this->multiHandle, $slot['handle']);
+                    }
+                    curl_close($slot['handle']);
+                }
             }
+            curl_multi_close($this->multiHandle);
+            $this->multiHandle = null;
         }
-        $this->slots = $this->numSlots > 0 ? array_fill(0, $this->numSlots, ['handle' => null, 'start_time' => null]) : [];
+        $this->slots = $this->numSlots > 0
+            ? array_fill(0, $this->numSlots, ['handle' => null, 'start_time' => null])
+            : [];
         $this->slotHandles = [];
-        curl_multi_close($this->multiHandle);
-        $this->multiHandle = null;
+        if ($this->syncHandle !== null) {
+            curl_close($this->syncHandle);
+            $this->syncHandle = null;
+        }
     }
 }

@@ -374,6 +374,10 @@ class Statistics {
         $output .= sprintf("Total queries:    %d\n", $this->completed_queries);
         $output .= sprintf("Threads:          %d\n", $this->threads);
         $output .= sprintf("Batch size:       %d\n", $this->batch_size);
+        $peak_stats = $process_info['peak_resource_stats'] ?? ['rss' => 'N/A', 'disk' => 'N/A', 'cpu' => 'N/A'];
+        $output .= sprintf("Peak RSS usage:   %s\n", $peak_stats['rss']);
+        $output .= sprintf("Peak disk usage:  %s\n", $peak_stats['disk']);
+        $output .= sprintf("Peak CPU usage:   %s\n", $peak_stats['cpu']);
         
         if ($this->is_insert_query) {
             $total_docs_display = $this->has_multiple_loads ? "N/A" : (string)$this->completed_operations;
@@ -512,7 +516,7 @@ class LatencyHistogram {
 class MonitoringStats {
     // Tracks system metrics like thread count and disk usage
     private $connection;          // MySQL connection to Manticore
-    private $table_name;          // Table being monitored
+    private $table_names;         // Tables being monitored
     private $last_disk_bytes = 0; // Previous disk usage measurement
     private $last_disk_time;      // Timestamp of last measurement
     private $size_samples = [];   // Recent disk usage samples
@@ -522,14 +526,14 @@ class MonitoringStats {
      * Establishes monitoring connection to Manticore Search
      * @param string $host Manticore server host
      * @param int $port Manticore server port
-     * @param string|null $table_name Optional table name to monitor
+     * @param string|array|null $table_name Optional table name(s) to monitor
      */
     public function __construct($host, $port, $table_name = null) {
         $this->connection = mysqli_connect($host, '', '', '', $port);
         if (!$this->connection) {
             throw new Exception("Cannot create monitoring connection to Manticore: " . mysqli_connect_error());
         }
-        $this->table_name = $table_name;
+        $this->table_names = array_values(array_unique(array_filter((array)$table_name)));
         $this->last_disk_time = microtime(true);
     }
 
@@ -552,16 +556,16 @@ class MonitoringStats {
                 mysqli_free_result($result);
             }
             
-            if ($this->table_name) {
-                $result = mysqli_query($this->connection, "SHOW TABLE {$this->table_name} STATUS");
+            foreach ($this->table_names as $table_name) {
+                $result = mysqli_query($this->connection, "SHOW TABLE {$table_name} STATUS");
                 if ($result) {
                     while ($row = mysqli_fetch_assoc($result)) {
                         switch ($row['Variable_name']) {
-                            case 'disk_chunks': $disk_chunks = (int)$row['Value']; break;
-                            case 'optimizing': $is_optimizing = (int)$row['Value']; break;
-                            case 'disk_bytes': $disk_bytes = (int)$row['Value']; break;
-                            case 'ram_bytes': $ram_bytes = (int)$row['Value']; break;
-                            case 'indexed_documents': $indexed_documents = (int)$row['Value']; break;
+                            case 'disk_chunks': $disk_chunks += (int)$row['Value']; break;
+                            case 'optimizing': $is_optimizing = $is_optimizing || (int)$row['Value']; break;
+                            case 'disk_bytes': $disk_bytes += (int)$row['Value']; break;
+                            case 'ram_bytes': $ram_bytes += (int)$row['Value']; break;
+                            case 'indexed_documents': $indexed_documents += (int)$row['Value']; break;
                         }
                     }
                     mysqli_free_result($result);

@@ -13,7 +13,7 @@ Manticore Load Emulator is a powerful tool for testing and benchmarking Manticor
 - **Helpful Patterns:** Provides helpful patterns for generating random data.
 - **Batch Loading:** Efficiently handles large data insertions or replacements in batches.
 - **Worker Lifecycle SQL:** Runs setup and finalization SQL on every persistent worker connection.
-- **Progress Monitoring:** Displays real-time progress and detailed statistics.
+- **Progress Monitoring:** Displays real-time progress, including CPU usage and the RSS of the local `searchd` handling the load, and reports peak RSS, disk, and CPU usage in the final statistics.
 - **Flexible Configuration:** Configurable via command-line arguments for convenience.
 - **Latency and QPS Tracking:** Tracks latency percentiles and queries-per-second (QPS) for performance insights.
 - **Multi-Process Support:** Runs different workloads simultaneously for comprehensive testing.

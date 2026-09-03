@@ -610,3 +610,100 @@ class MonitoringStats {
         mysqli_close($this->connection);
     }
 }
+
+/**
+ * Manticore HTTP monitoring: uses /sql?mode=raw for SHOW THREADS / SHOW TABLE STATUS
+ * to expose the same getStats() shape as MonitoringStats for progress display.
+ */
+class MonitoringStatsHttp {
+    private $client;
+    private $tableName;
+    private $last_disk_time;
+    private $size_samples = [];
+    private $sample_window = 5;
+
+    public function __construct($host, $port, $table_name = null) {
+        $this->client = new ManticoreHttpClient($host, $port, 0);
+        $this->tableName = $table_name;
+        $this->last_disk_time = microtime(true);
+    }
+
+    /**
+     * Run SQL via /sql?mode=raw and return decoded JSON (array) or null.
+     */
+    private function sqlRaw($sql) {
+        $res = $this->client->request('POST', 'sql?mode=raw', $sql, 'text/plain');
+        if ($res['status'] >= 400 || $res['body'] === '') {
+            return null;
+        }
+        $decoded = json_decode($res['body'], true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    public function getStats() {
+        $thread_count = 0;
+        $disk_chunks = 0;
+        $is_optimizing = 0;
+        $disk_bytes = 0;
+        $ram_bytes = 0;
+        $indexed_documents = 0;
+
+        try {
+            $threads = $this->sqlRaw('SHOW THREADS');
+            if (is_array($threads) && isset($threads[0]['data']) && is_array($threads[0]['data'])) {
+                $thread_count = count($threads[0]['data']);
+            }
+
+            if ($this->tableName !== null && $this->tableName !== '') {
+                $status = $this->sqlRaw('SHOW TABLE ' . $this->tableName . ' STATUS');
+                if (is_array($status) && isset($status[0]['data']) && is_array($status[0]['data'])) {
+                    foreach ($status[0]['data'] as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+                        // /sql?mode=raw returns associative rows: {"Variable_name":"...","Value":"..."}
+                        if (array_key_exists('Variable_name', $row) && array_key_exists('Value', $row)) {
+                            $name = $row['Variable_name'];
+                            $value = $row['Value'];
+                        } elseif (isset($row[0], $row[1])) {
+                            $name = $row[0];
+                            $value = $row[1];
+                        } else {
+                            continue;
+                        }
+                        switch ($name) {
+                            case 'disk_chunks': $disk_chunks = (int)$value; break;
+                            case 'optimizing': $is_optimizing = (int)$value; break;
+                            case 'disk_bytes': $disk_bytes = (int)$value; break;
+                            case 'ram_bytes': $ram_bytes = (int)$value; break;
+                            case 'indexed_documents': $indexed_documents = (int)$value; break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            // Leave stats at 0 on error
+        }
+
+        $now = microtime(true);
+        $this->size_samples[] = ['time' => $now, 'bytes' => $disk_bytes];
+        $cutoff_time = $now - $this->sample_window;
+        $this->size_samples = array_filter($this->size_samples, function ($s) use ($cutoff_time) {
+            return $s['time'] >= $cutoff_time;
+        });
+        $this->last_disk_time = $now;
+
+        return [
+            'thread_count' => $thread_count,
+            'disk_chunks' => $disk_chunks,
+            'is_optimizing' => $is_optimizing,
+            'disk_bytes' => $disk_bytes,
+            'ram_bytes' => $ram_bytes,
+            'indexed_documents' => $indexed_documents,
+        ];
+    }
+
+    public function close() {
+        $this->client->close();
+    }
+}

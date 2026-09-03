@@ -750,11 +750,19 @@ class ProgressDisplay {
             if ($processConfig && !empty($processConfig['table'])) {
                 $table = $processConfig['table'];
                 if (!isset($monitoring[$table])) {
-                    $monitoring[$table] = new MonitoringStats(
-                        $config->get('host'), 
-                        $config->get('port'),
-                        $table
-                    );
+                    if ($config->get('http')) {
+                        $monitoring[$table] = new MonitoringStatsHttp(
+                            $config->get('host'),
+                            $config->get('port'),
+                            $table
+                        );
+                    } else {
+                        $monitoring[$table] = new MonitoringStats(
+                            $config->get('host'),
+                            $config->get('port'),
+                            $table
+                        );
+                    }
                 }
             }
         }

@@ -801,25 +801,29 @@ class QueryGenerator {
                     if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $base_query = $matches[1];
                         $batch[] = "(" . $matches[2] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching (multiline SQL is supported; check query syntax)");
                     }
                 } else {
                     if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch[] = "(" . $matches[1] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching");
                     }
                 }
                 
                 if (count($batch) == $batch_size) {
                     $full_query = $base_query . implode(",", $batch);
-                    fwrite($cache_file, $full_query . ";\n");
+                    $this->writeCacheQuery($cache_file, $full_query);
                     if ($queries !== null) {
-                        $queries[] = $full_query;
+                        $queries[] = $this->flattenSql($full_query);
                     }
                     $batch = [];
                 }
             } else {
-                fwrite($cache_file, $query . ";\n");
+                $this->writeCacheQuery($cache_file, $query);
                 if ($queries !== null) {
-                    $queries[] = $query;
+                    $queries[] = $this->flattenSql($query);
                 }
             }
             
@@ -835,9 +839,9 @@ class QueryGenerator {
         
         if (!empty($batch)) {
             $full_query = $base_query . implode(",", $batch);
-            fwrite($cache_file, $full_query . "\n");
+            $this->writeCacheQuery($cache_file, $full_query);
             if ($queries !== null) {
-                $queries[] = $full_query;
+                $queries[] = $this->flattenSql($full_query);
             }
         }
         
@@ -893,20 +897,24 @@ class QueryGenerator {
                     if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $base_query = $matches[1];
                         $batch[] = "(" . $matches[2] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching (multiline SQL is supported; check query syntax)");
                     }
                 } else {
                     if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch[] = "(" . $matches[1] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching");
                     }
                 }
 
                 if (count($batch) == $batch_size) {
                     $full_query = $base_query . implode(",", $batch);
-                    fwrite($cache_file, $full_query . ";\n");
+                    $this->writeCacheQuery($cache_file, $full_query);
                     $batch = [];
                 }
             } else {
-                fwrite($cache_file, $query . ";\n");
+                $this->writeCacheQuery($cache_file, $query);
             }
 
             $c++;
@@ -917,7 +925,7 @@ class QueryGenerator {
 
         if (!empty($batch)) {
             $full_query = $base_query . implode(",", $batch);
-            fwrite($cache_file, $full_query . "\n");
+            $this->writeCacheQuery($cache_file, $full_query);
         }
 
         fclose($cache_file);
@@ -1037,25 +1045,29 @@ class QueryGenerator {
                     if (preg_match('/(.*VALUES\s*)\((.*)\)/is', $query, $matches)) {
                         $batch_buffers[$load_index]['base_query'] = $matches[1];
                         $batch_buffers[$load_index]['batch'][] = "(" . $matches[2] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching (multiline SQL is supported; check query syntax)");
                     }
                 } else {
                     if (preg_match('/VALUES\s*\((.*)\)/is', $query, $matches)) {
                         $batch_buffers[$load_index]['batch'][] = "(" . $matches[1] . ")";
+                    } else {
+                        throw new Exception("Cannot parse INSERT/REPLACE VALUES clause for batching");
                     }
                 }
 
                 if (count($batch_buffers[$load_index]['batch']) == $batch_size) {
                     $full_query = $batch_buffers[$load_index]['base_query'] . implode(",", $batch_buffers[$load_index]['batch']);
-                    fwrite($cache_file, $full_query . ";\n");
+                    $this->writeCacheQuery($cache_file, $full_query);
                     if ($queries !== null) {
-                        $queries[] = $full_query;
+                        $queries[] = $this->flattenSql($full_query);
                     }
                     $batch_buffers[$load_index]['batch'] = [];
                 }
             } else {
-                fwrite($cache_file, $query . ";\n");
+                $this->writeCacheQuery($cache_file, $query);
                 if ($queries !== null) {
-                    $queries[] = $query;
+                    $queries[] = $this->flattenSql($query);
                 }
             }
 
@@ -1072,9 +1084,9 @@ class QueryGenerator {
         foreach ($batch_buffers as $buffer) {
             if (!empty($buffer['batch'])) {
                 $full_query = $buffer['base_query'] . implode(",", $buffer['batch']);
-                fwrite($cache_file, $full_query . "\n");
+                $this->writeCacheQuery($cache_file, $full_query);
                 if ($queries !== null) {
-                    $queries[] = $full_query;
+                    $queries[] = $this->flattenSql($full_query);
                 }
             }
         }
@@ -1142,6 +1154,21 @@ class QueryGenerator {
     }
     
     /**
+     * Collapse whitespace so each cached query is one line.
+     * Cache format is newline-delimited; multiline SQL would be split on read.
+     */
+    private function flattenSql($sql) {
+        return trim(preg_replace('/\s+/u', ' ', (string)$sql));
+    }
+
+    /**
+     * Write one query as a single cache line (flattened, trailing semicolon).
+     */
+    private function writeCacheQuery($cache_file, $query) {
+        fwrite($cache_file, $this->flattenSql($query) . ";\n");
+    }
+
+    /**
      * Parses the load command to extract patterns and determine batch compatibility
      * @param string $command SQL command template
      * @return array Command info including patterns and batch compatibility
@@ -1171,7 +1198,8 @@ class QueryGenerator {
             }
         }
 
-        $is_insert = (stripos($command, 'insert') === 0 || stripos($command, 'replace') === 0);
+        $trimmed = ltrim($command);
+        $is_insert = (stripos($trimmed, 'insert') === 0 || stripos($trimmed, 'replace') === 0);
 
         return [
             'command' => $command,

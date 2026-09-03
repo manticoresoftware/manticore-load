@@ -858,7 +858,7 @@ function run_process_manticore_http($process_config, $config, $process_index, $n
     global $shm_id, $sem_id, $stop_shm_id;
 
     $process_configuration = new Configuration([]);
-    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'http', 'index', 'cache-from-disk', 'cache-gen-workers'];
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'http', 'table', 'cache-from-disk', 'cache-gen-workers'];
     foreach ($global_settings as $setting) {
         $val = $config->get($setting);
         if ($val !== null) {
@@ -884,7 +884,7 @@ function run_process_manticore_http($process_config, $config, $process_index, $n
     $threads = is_array($process_config['threads']) ? $process_config['threads'][0] : (int)$process_config['threads'];
     $batch_size = is_array($process_config['batch-size']) ? $process_config['batch-size'][0] : (int)$process_config['batch-size'];
 
-    $table_name = $config->get('index');
+    $table_name = $config->get('table');
     if (($table_name === null || $table_name === '') && isset($process_config['init_command']) && $process_config['init_command'] !== '') {
         if (preg_match('/create\s+table\s+(?:if\s+not\s+exists\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i', $process_config['init_command'], $matches)) {
             $table_name = $matches[1];
@@ -908,7 +908,7 @@ function run_process_manticore_http($process_config, $config, $process_index, $n
 
     if (!empty($process_config['drop'])) {
         if ($table_name === null || $table_name === '') {
-            die("ERROR: In --http mode with --drop, specify --index=NAME or provide --init with CREATE TABLE name\n");
+            die("ERROR: In --http mode with --drop, specify --table=NAME or provide --init with CREATE TABLE name\n");
         }
         if (!$config->get('quiet')) {
             ConsoleOutput::writeLine("Process $process_index: Dropping table: DROP TABLE IF EXISTS $table_name");
@@ -968,7 +968,7 @@ function run_process_manticore_http($process_config, $config, $process_index, $n
     }
 
     if ($table_name === null || $table_name === '') {
-        die("ERROR: In --http mode, set --index=NAME or provide --init with CREATE TABLE name.\n");
+        die("ERROR: In --http mode, set --table=NAME or provide --init with CREATE TABLE name.\n");
     }
     if (!preg_match('/^[a-zA-Z0-9_:]+$/', $table_name)) {
         die("Error: Invalid table name. Use only letters, numbers and underscore.\n");

@@ -47,7 +47,7 @@ class Configuration implements ArrayAccess {
         'column:',
         'delay:',
         'http',
-        'index:',
+        'table:',
     ];
     
     /** @var array Default configuration values */
@@ -68,7 +68,7 @@ class Configuration implements ArrayAccess {
         'cache-from-disk' => false,
         'delay' => 0,
         'http' => false,
-        'index' => null,
+        'table' => null,
     ];
 
     /** @var array Stores configurations for multiple processes */
@@ -370,11 +370,11 @@ class Configuration implements ArrayAccess {
             }
 
             // In --http mode with --drop, table name must be known
-            if ($this->get('http') && !empty($process['drop']) && empty($this->options['index'])) {
+            if ($this->get('http') && !empty($process['drop']) && empty($this->options['table'])) {
                 $init = $process['init_command'] ?? $process['init'] ?? null;
                 $table = $init ? $this->extractTableNameFromSql($init) : null;
                 if (!$table) {
-                    die("ERROR: In --http mode with --drop, specify --index=NAME or provide --init with CREATE TABLE name\n");
+                    die("ERROR: In --http mode with --drop, specify --table=NAME or provide --init with CREATE TABLE name\n");
                 }
             }
 
@@ -528,7 +528,7 @@ class Configuration implements ArrayAccess {
             "  --http                       Use Manticore HTTP JSON API instead of MySQL protocol.\n" .
             "                               --init/--drop use SQL over /sql; --load uses JSON.\n" .
             "                               Default port 9308.\n" .
-            "  --index=NAME                 Table name for /bulk and monitoring. If unset, taken from CREATE TABLE in --init.\n" .
+            "  --table=NAME                 Table name for /bulk and monitoring. If unset, taken from CREATE TABLE in --init.\n" .
             "  --load for writes is a document template (id optional); requests go to /bulk.\n" .
             "  --load for reads is a full /search JSON body (must include \"query\").\n\n" .
             "Examples:\n\n" .
@@ -559,13 +559,13 @@ class Configuration implements ArrayAccess {
             "\nHTTP Mode Examples:\n\n" .
 
             "# Load 1M documents in batches of 1000 over HTTP:\n" .
-            "manticore-load --http --index=test --port=9308 \\\n" .
+            "manticore-load --http --table=test --port=9308 \\\n" .
             "--drop --batch-size=1000 --threads=5 --total=1000000 \\\n" .
             "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
             "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
 
             "# Execute 10k search queries over HTTP:\n" .
-            "manticore-load --http --index=test --port=9308 \\\n" .
+            "manticore-load --http --table=test --port=9308 \\\n" .
             "--threads=5 --total=10000 \\\n" .
             "--load='{\"index\":\"test\",\"query\":{\"query_string\":\"<text/1/3>\"}}'\n\n"
         );
@@ -799,8 +799,8 @@ class Configuration implements ArrayAccess {
         
         $config = $this->processes[$index];
         
-        // Prefer --index; else extract from SQL / CREATE TABLE
-        $table = $this->get('index') ?: '';
+        // Prefer --table; else extract from SQL / CREATE TABLE
+        $table = $this->get('table') ?: '';
         if (!$table) {
             if (isset($config['load_commands'])) {
                 $table = $this->extractTableName($config['load_commands']);

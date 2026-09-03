@@ -44,6 +44,8 @@
     - `monitorProgressFiles()` - Monitors multiple process progress
     - `formatBytes()` - Formats file sizes
     - `getCpuUsage()` - Gets current CPU usage
+    - `getSearchdRssUsage()` - Gets RSS for the local searchd listening on the configured endpoint
+    - `sampleResourceStats()` - Tracks peak RSS, disk, and CPU usage for the final report
 
 ### Query Generator (query_generator.php)
 - **Class: QueryGenerator**

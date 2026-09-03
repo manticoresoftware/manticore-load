@@ -1,0 +1,7 @@
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+php test/searchd_rss_test.php
+––– output –––
+OK

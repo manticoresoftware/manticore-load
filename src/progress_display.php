@@ -40,7 +40,7 @@ class ProgressDisplay {
 
     /**
      * Format string for progress display output
-     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, Workers, Chunks, Merging, Size, Docs
+     * Columns: Time, Elapsed, Progress, QPS, DPS, CPU, RSS, Workers, Chunks, Merging, Size, Docs
      */
     private static string $PROGRESS_FORMAT = "%-8s  %-8s  %-8s  %-6s  %-10s | %-9s  %-8s  %-7s  %-8s  %-10s  %-8s\n";
 
@@ -53,9 +53,15 @@ class ProgressDisplay {
     private int $last_processed_batches = 0;
     private float $start_time;
     private bool $has_multiple_loads;
+    private ?string $resourceHost;
+    private ?int $resourcePort;
+    private ?float $peakCpu = null;
+    private ?int $peakRssBytes = null;
+    private ?int $peakDiskBytes = null;
 
     private static ?array $prev_values = null;
     private static ?float $prev_time = null;
+    private static array $searchdPids = [];
 
     private $tempFile;
     private string $tempFilePath;
@@ -78,14 +84,21 @@ class ProgressDisplay {
      * @param bool $is_insert Whether operation is insert (vs update)
      * @param bool $use_histograms Whether histograms are enabled
      * @param ?object $statistics Statistics collector object
+     * @param bool $has_multiple_loads Whether the process uses multiple load commands
+     * @param ?string $resourceHost Host used to identify the target searchd
+     * @param ?int $resourcePort Port used to identify the target searchd
      */
-    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics, bool $has_multiple_loads = false) {
+    public function __construct(bool $quiet, int $total_batches, bool $is_insert, bool $use_histograms, ?object $statistics, bool $has_multiple_loads = false, ?string $resourceHost = null, ?int $resourcePort = null) {
         $this->quiet = $quiet;
         $this->total_batches = $total_batches;
         $this->is_insert = $is_insert;
         $this->use_histograms = $use_histograms;
         $this->statistics = $statistics;
         $this->has_multiple_loads = $has_multiple_loads;
+        $this->resourceHost = $resourceHost;
+        $this->resourcePort = $resourcePort;
+        self::$prev_values = null;
+        self::$prev_time = null;
         $this->start_time = microtime(true);
         $this->last_update_time = $this->start_time;
 
@@ -173,6 +186,9 @@ class ProgressDisplay {
         $qps = self::calculateQPS($interval_batches, $interval_elapsed);
         $load_stats->addQps($qps);
         $progress = $this->total_batches > 0 ? round($processed_batches * 100 / $this->total_batches) . "%" : "N/A";
+        if (!$this->quiet) {
+            $this->sampleResourceStats($common_monitoring);
+        }
         
         $dps_display = "-";
         if ($this->is_insert) {
@@ -199,6 +215,44 @@ class ProgressDisplay {
         if (!$this->quiet) {
             $this->saveProgress($stats);
         }
+    }
+
+    public function sampleResourceStats($monitoring) {
+        $monitoringStats = $monitoring->getStats();
+        $rss = ($this->resourceHost !== null && $this->resourcePort !== null)
+            ? self::getSearchdRssUsage($this->resourceHost, $this->resourcePort)
+            : 'N/A';
+        $this->recordResourceStats(self::getCpuUsage(), $rss, (int)($monitoringStats['disk_bytes'] ?? 0));
+    }
+
+    public function recordResourceStats($cpu, $rss, $diskBytes) {
+        if (preg_match('/^(\d+(?:\.\d+)?)%$/', (string)$cpu, $matches)) {
+            $this->peakCpu = max($this->peakCpu ?? 0, (float)$matches[1]);
+        }
+
+        $rssBytes = self::parseFormattedBytes($rss);
+        if ($rssBytes !== null) {
+            $this->peakRssBytes = max($this->peakRssBytes ?? 0, $rssBytes);
+        }
+
+        $this->peakDiskBytes = max($this->peakDiskBytes ?? 0, (int)$diskBytes);
+    }
+
+    public function getPeakResourceStats() {
+        return [
+            'rss' => $this->peakRssBytes === null ? 'N/A' : self::formatBytes($this->peakRssBytes),
+            'disk' => $this->peakDiskBytes === null ? 'N/A' : self::formatBytes($this->peakDiskBytes),
+            'cpu' => $this->peakCpu === null ? 'N/A' : sprintf('%g%%', $this->peakCpu)
+        ];
+    }
+
+    private static function parseFormattedBytes($value) {
+        if (!preg_match('/^(\d+(?:\.\d+)?)(B|KB|MB|GB)$/', (string)$value, $matches)) {
+            return null;
+        }
+
+        $multipliers = ['B' => 1, 'KB' => 1024, 'MB' => 1024 * 1024, 'GB' => 1024 * 1024 * 1024];
+        return (int)round((float)$matches[1] * $multipliers[$matches[2]]);
     }
 
     private function formatProgressLine($time, $elapsed, $progress, $qps, $dps, $cpu, $workers, $chunks, $merging, $write_speed, $size, $docs) {
@@ -316,6 +370,238 @@ class ProgressDisplay {
         return round($cpu)."%";
     }
 
+    /**
+     * Gets the RSS of the local searchd process listening on the target endpoint.
+     *
+     * @return string RSS in human-readable form or "N/A"
+     */
+    public static function getSearchdRssUsage($host, $port, $procRoot = '/proc', $localAddresses = null) {
+        $targetAddresses = self::resolveHostAddresses($host);
+        $localAddresses = $localAddresses ?? self::getLocalAddresses();
+        if (!self::isLocalTarget($targetAddresses, $localAddresses)) {
+            return "N/A";
+        }
+
+        if (PHP_OS === 'Darwin' && $procRoot === '/proc') {
+            return self::getDarwinSearchdRssUsage($targetAddresses, $port);
+        }
+
+        $socketInodes = self::getListeningSocketInodes($procRoot, $targetAddresses, $port);
+        if (empty($socketInodes)) {
+            return "N/A";
+        }
+
+        $cacheKey = $procRoot . ':' . implode(',', $targetAddresses) . ':' . (int)$port;
+        if (isset(self::$searchdPids[$cacheKey])) {
+            $rss = self::readLinuxSearchdRss($procRoot . '/' . self::$searchdPids[$cacheKey], $socketInodes);
+            if ($rss !== null) {
+                return self::formatBytes($rss);
+            }
+            unset(self::$searchdPids[$cacheKey]);
+        }
+
+        foreach (glob($procRoot . '/[0-9]*', GLOB_ONLYDIR) ?: [] as $processDir) {
+            $rss = self::readLinuxSearchdRss($processDir, $socketInodes);
+            if ($rss !== null) {
+                self::$searchdPids[$cacheKey] = (int)basename($processDir);
+                return self::formatBytes($rss);
+            }
+        }
+
+        return "N/A";
+    }
+
+    private static function readLinuxSearchdRss($processDir, $socketInodes) {
+        $comm = @file_get_contents($processDir . '/comm');
+        if ($comm === false || trim($comm) !== 'searchd') {
+            return null;
+        }
+
+        foreach (glob($processDir . '/fd/*') ?: [] as $fd) {
+            $target = @readlink($fd);
+            if ($target === false || !preg_match('/^socket:\\[(\\d+)\\]$/', $target, $matches)) {
+                continue;
+            }
+            if (!isset($socketInodes[$matches[1]])) {
+                continue;
+            }
+
+            $status = @file_get_contents($processDir . '/status');
+            if ($status !== false && preg_match('/^VmRSS:\\s+(\\d+)\\s+kB$/mi', $status, $rss)) {
+                return (int)$rss[1] * 1024;
+            }
+        }
+
+        return null;
+    }
+
+    private static function resolveHostAddresses($host) {
+        $host = trim((string)$host, '[]');
+        $normalized = self::normalizeAddress($host);
+        if ($normalized !== null) {
+            return [$normalized];
+        }
+
+        if (strtolower($host) === 'localhost') {
+            return ['127.0.0.1', '::1'];
+        }
+
+        $addresses = @gethostbynamel($host) ?: [];
+        if (function_exists('dns_get_record')) {
+            foreach (@dns_get_record($host, DNS_AAAA) ?: [] as $record) {
+                if (isset($record['ipv6'])) {
+                    $addresses[] = $record['ipv6'];
+                }
+            }
+        }
+
+        $localNames = [strtolower((string)gethostname()), strtolower((string)php_uname('n'))];
+        if (empty($addresses) && in_array(strtolower($host), $localNames, true)) {
+            return self::getLocalAddresses();
+        }
+
+        return array_values(array_unique(array_filter(array_map([self::class, 'normalizeAddress'], $addresses))));
+    }
+
+    private static function getLocalAddresses() {
+        $addresses = ['127.0.0.1', '::1'];
+        if (function_exists('net_get_interfaces')) {
+            foreach (@net_get_interfaces() ?: [] as $interface) {
+                foreach ($interface['unicast'] ?? [] as $address) {
+                    if (isset($address['address'])) {
+                        $addresses[] = $address['address'];
+                    }
+                }
+            }
+        } else {
+            $addresses = array_merge($addresses, @gethostbynamel((string)gethostname()) ?: []);
+        }
+
+        return array_values(array_unique(array_filter(array_map([self::class, 'normalizeAddress'], $addresses))));
+    }
+
+    private static function isLocalTarget($targetAddresses, $localAddresses) {
+        $localAddresses = array_filter(array_map([self::class, 'normalizeAddress'], $localAddresses));
+        foreach ($targetAddresses as $address) {
+            if ($address === '0.0.0.0' || $address === '::' || $address === '::1' || strpos($address, '127.') === 0) {
+                return true;
+            }
+            if (in_array($address, $localAddresses, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function normalizeAddress($address) {
+        $address = preg_replace('/%.+$/', '', strtolower(trim((string)$address, '[]')));
+        $packed = @inet_pton($address);
+        return $packed === false ? null : inet_ntop($packed);
+    }
+
+    private static function getListeningSocketInodes($procRoot, $targetAddresses, $port) {
+        $port = (int)$port;
+        if ($port < 1 || $port > 65535) {
+            return [];
+        }
+
+        $inodes = [];
+        foreach (['tcp', 'tcp6'] as $protocol) {
+            $lines = @file($procRoot . '/net/' . $protocol, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            if ($lines === false) {
+                continue;
+            }
+            foreach ($lines as $line) {
+                $fields = preg_split('/\\s+/', trim($line));
+                if (count($fields) < 10 || $fields[3] !== '0A') {
+                    continue;
+                }
+                $local = explode(':', $fields[1]);
+                if (count($local) !== 2 || hexdec($local[1]) !== $port) {
+                    continue;
+                }
+                $listenerAddress = self::decodeProcAddress($local[0], $protocol === 'tcp6');
+                if ($listenerAddress === null || !self::listenerMatchesTarget($listenerAddress, $targetAddresses)) {
+                    continue;
+                }
+                $inodes[$fields[9]] = true;
+            }
+        }
+        return $inodes;
+    }
+
+    private static function decodeProcAddress($hex, $ipv6) {
+        if (!$ipv6) {
+            $bytes = @hex2bin($hex);
+            return $bytes === false ? null : inet_ntop(strrev($bytes));
+        }
+
+        $packed = '';
+        foreach (str_split($hex, 8) as $word) {
+            $bytes = @hex2bin($word);
+            if ($bytes === false) {
+                return null;
+            }
+            $packed .= strrev($bytes);
+        }
+        return @inet_ntop($packed) ?: null;
+    }
+
+    private static function listenerMatchesTarget($listenerAddress, $targetAddresses) {
+        if ($listenerAddress === '0.0.0.0' || $listenerAddress === '::') {
+            return true;
+        }
+        if (in_array('0.0.0.0', $targetAddresses, true) || in_array('::', $targetAddresses, true)) {
+            return true;
+        }
+        return in_array($listenerAddress, $targetAddresses, true);
+    }
+
+    private static function getDarwinSearchdRssUsage($targetAddresses, $port) {
+        $port = (int)$port;
+        if ($port < 1 || $port > 65535 || !function_exists('exec')) {
+            return "N/A";
+        }
+
+        $output = [];
+        $exitCode = 0;
+        @exec(sprintf('/usr/sbin/lsof -nP -a -c searchd -iTCP:%d -sTCP:LISTEN -Fpn 2>/dev/null', $port), $output, $exitCode);
+        if ($exitCode !== 0 || empty($output)) {
+            return "N/A";
+        }
+
+        $pid = null;
+        foreach ($output as $line) {
+            if (preg_match('/^p(\d+)$/', $line, $matches)) {
+                $pid = (int)$matches[1];
+                continue;
+            }
+            if ($pid === null || !preg_match('/^n(?:\[([^]]+)\]|([^:]+)):\d+$/', $line, $matches)) {
+                continue;
+            }
+            $listenerAddress = $matches[1] !== '' ? $matches[1] : $matches[2];
+            if ($listenerAddress === '*' || self::listenerMatchesTarget(self::normalizeAddress($listenerAddress), $targetAddresses)) {
+                $rss = self::readDarwinSearchdRss($pid);
+                if ($rss !== null) {
+                    return self::formatBytes($rss);
+                }
+            }
+        }
+
+        return "N/A";
+    }
+
+    private static function readDarwinSearchdRss($pid) {
+        $output = [];
+        $exitCode = 0;
+        @exec(sprintf('/bin/ps -ww -o ucomm= -o rss= -p %d 2>/dev/null', (int)$pid), $output, $exitCode);
+        if ($exitCode !== 0 || empty($output) || !preg_match('/^\s*searchd\s+(\d+)\s*$/', $output[0], $rss)) {
+            return null;
+        }
+
+        return (int)$rss[1] * 1024;
+    }
+
     public function saveProgress($stats) {
         // Write progress data to temp file
         $stats['pid'] = getmypid();
@@ -376,6 +662,7 @@ class ProgressDisplay {
         // Add widths for common columns
         $widths = array_merge($widths, [
             'cpu' => 6,
+            'rss' => 9,
             'workers' => 9,
             'chunks' => 8,
             'merging' => 8,
@@ -423,6 +710,7 @@ class ProgressDisplay {
         // Add common headers
         $headers = array_merge($headers, [
             self::colorize(str_pad("CPU", $widths['cpu']), self::COLOR_YELLOW),
+            self::colorize(str_pad("RSS", $widths['rss']), self::COLOR_YELLOW),
             self::colorize(str_pad("Workers", $widths['workers']), self::COLOR_YELLOW),
             self::colorize(str_pad("Chunks", $widths['chunks']), self::COLOR_YELLOW),
             self::colorize(str_pad("Merging", $widths['merging']), self::COLOR_RED),
@@ -474,6 +762,7 @@ class ProgressDisplay {
         while (true) {
             $stats = [];
             $currentTime = microtime(true);
+            $searchdRss = self::getSearchdRssUsage($config->get('host'), $config->get('port'));
             
             // Get current monitoring stats for each table
             $monitoringStats = [];
@@ -565,6 +854,7 @@ class ProgressDisplay {
                                 // Merge monitoring stats with base stats
                                 $stats[$pid] = array_merge($baseStats, [
                                     'cpu' => sprintf("%.4s", self::getCpuUsage()),
+                                    'rss' => $searchdRss,
                                     'workers' => (string)$tableStats['thread_count'],
                                     'disk_chunks' => (string)$tableStats['disk_chunks'],
                                     'is_optimizing' => $tableStats['is_optimizing'] ? "yes" : "",
@@ -613,6 +903,7 @@ class ProgressDisplay {
                     'time' => date('H:i:s'),
                     'elapsed' => $currentTime - $startTime,
                     'cpu' => $anyStats['cpu'],
+                    'rss' => $searchdRss,
                     'workers' => $anyStats['workers'],
                     'chunks' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
                         $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
@@ -665,6 +956,7 @@ class ProgressDisplay {
                     'time' => date('H:i:s'),
                     'elapsed' => $currentTime - $startTime,
                     'cpu' => $anyStats['cpu'],
+                    'rss' => $searchdRss,
                     'workers' => $anyStats['workers'],
                     'chunks' => array_sum(array_map(function($pid, $stat) use ($config, $pidToIndex) {
                         $processConfig = $config->getProcessConfig($pidToIndex[$pid]);
@@ -697,6 +989,7 @@ class ProgressDisplay {
                     'time' => date('H:i:s'),
                     'elapsed' => $currentTime - $startTime,
                     'cpu' => 'N/A',
+                    'rss' => $searchdRss,
                     'workers' => '-',
                     'chunks' => 0,
                     'is_optimizing' => '',
@@ -722,6 +1015,7 @@ class ProgressDisplay {
             // Add common values
             $values = array_merge($values, [
                 self::colorize(str_pad($combinedStats['cpu'], $widths['cpu']), self::COLOR_YELLOW),
+                self::colorize(str_pad($combinedStats['rss'], $widths['rss']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['workers'], $widths['workers']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['chunks'], $widths['chunks']), self::COLOR_YELLOW),
                 self::colorize(str_pad($combinedStats['is_optimizing'], $widths['merging']), self::COLOR_RED),

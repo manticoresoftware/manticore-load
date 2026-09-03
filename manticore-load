@@ -160,7 +160,7 @@ function runSqlCommands($link, $commands) {
     }
 }
 
-function runSqlCommandsConcurrently($links, $commands) {
+function runSqlCommandsConcurrently($links, $commands, $resource_sampler = null) {
     foreach (splitSqlCommands($commands) as $query) {
         $pending = [];
         $firstError = null;
@@ -173,11 +173,16 @@ function runSqlCommandsConcurrently($links, $commands) {
             }
         }
 
+        $last_resource_sample = microtime(true);
         while ($pending) {
             $ready = $errors = $reject = array_values($pending);
             $count = mysqli_poll($ready, $errors, $reject, 1);
             if ($count === false) {
                 throw new RuntimeException('Failed while waiting for worker lifecycle SQL');
+            }
+            if ($resource_sampler !== null && microtime(true) - $last_resource_sample >= 1.0) {
+                $resource_sampler();
+                $last_resource_sample = microtime(true);
             }
             if ($count === 0) continue;
 
@@ -226,7 +231,7 @@ if ($stop_shm_id === false) {
 shmop_write($stop_shm_id, "\0", 0);
 
 // This function waits for an idle mysql connection for the $query, runs it and exits
-function process($query, &$all_links, &$requests, &$statistics, $delay) {
+function process($query, &$all_links, &$requests, &$statistics, $delay, $resource_sampler = null) {
     global $stop_shm_id, $config;
 
     $is_gone_away = function($e) {
@@ -336,6 +341,9 @@ function process($query, &$all_links, &$requests, &$statistics, $delay) {
 
             // Check for stop signal every second
             if ($current_time - $last_check >= 1.0) {
+                if ($resource_sampler !== null) {
+                    $resource_sampler();
+                }
                 $stop_requested = ord(shmop_read($stop_shm_id, 0, 1)) === 1;
                 if ($stop_requested) {
                     return 'stop_requested';
@@ -622,17 +630,24 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         runSqlCommands($link, $process_config['worker_init_command'] ?? null);
     }
 
-    // Extract table name from load command if not found in init command
-    if (!isset($table_name)) {
-        $load_commands = $process_config['load_commands'] ?? [$process_config['load_command']];
-        foreach ($load_commands as $command) {
-            if (preg_match('/(?:from|into)\s+([^\s(,]+)/i', $command, $matches)) {
-                $table_name = $matches[1];
-                break;
-            }
+    // Extract all tables used by this workload for aggregate resource monitoring
+    $load_commands = $process_config['load_commands'] ?? [$process_config['load_command']];
+    $table_names = [];
+    foreach ($load_commands as $command) {
+        if (preg_match('/(?:from|into|update)\s+([^\s(,]+)/i', $command, $matches)) {
+            $table_names[] = $matches[1];
         }
     }
-    // Validate table name if found
+    $table_names = array_values(array_unique($table_names));
+    if (!isset($table_name) && !empty($table_names)) {
+        $table_name = $table_names[0];
+    }
+    // Validate table names if found
+    foreach ($table_names as $monitored_table) {
+        if (!preg_match('/^[a-zA-Z0-9_:]+$/', $monitored_table)) {
+            die("Error: Invalid table name. Use only letters, numbers and underscore.\n");
+        }
+    }
     if (isset($table_name) && !preg_match('/^[a-zA-Z0-9_:]+$/', $table_name)) {
         die("Error: Invalid table name. Use only letters, numbers and underscore.\n");
     }
@@ -670,7 +685,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     }
 
     // Initialize components
-    $monitoring = new MonitoringStats($config->get('host'), $config->get('port'), $table_name ?? null);
+    $monitoring = new MonitoringStats($config->get('host'), $config->get('port'), $table_names ?: ($table_name ?? null));
 
     // Create statistics instance for this process
     $load_commands = $process_config['load_commands'] ?? $process_config['load_command'];
@@ -691,7 +706,9 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         Configuration::isInsertQuery($load_commands),
         $config->get('latency-histograms'),
         $statistics,
-        $has_multiple_loads
+        $has_multiple_loads,
+        $config->get('host'),
+        $config->get('port')
     );
 
     // Synchronization: Signal readiness and wait for start
@@ -729,11 +746,17 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $last_processed_batches = 0;
     $progress_shown = false;
     $progress_updated = microtime(true);
+    if (!$config->get('quiet')) {
+        $progress->sampleResourceStats($monitoring);
+    }
+    $resource_sampler = $config->get('quiet') ? null : function() use ($progress, $monitoring) {
+        $progress->sampleResourceStats($monitoring);
+    };
 
     // Process each query batch
     $delay = $process_configuration->get('delay');
     foreach ($batches as $query) {
-        $result = process($query, $all_links, $requests, $statistics, $delay);
+        $result = process($query, $all_links, $requests, $statistics, $delay, $resource_sampler);
         if ($result === 'stop_requested') {
             if (!$config->get('quiet')) {
                 ConsoleOutput::writeLine("\nProcess $process_index: Stopped by user request.");
@@ -794,15 +817,21 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     }
 
     // Wait for workers to finish
+    $last_resource_sample = microtime(true);
     do {
         $links = $errors = $reject = array();
         foreach ($all_links as $link) {
             $links[] = $errors[] = $reject[] = $link;
         }
         $count = @mysqli_poll($links, $errors, $reject, 0, 100);
+        if ($resource_sampler !== null && microtime(true) - $last_resource_sample >= 1.0) {
+            $resource_sampler();
+            $last_resource_sample = microtime(true);
+        }
     } while (count($all_links) != count($links) + count($errors) + count($reject));
 
     if (!empty($process_config['worker_finalize_command'])) {
+        $last_resource_sample = microtime(true);
         foreach ($all_links as $i => $link) {
             if (!isset($requests[$i]) || $requests[$i] === null) continue;
             do {
@@ -810,6 +839,10 @@ function run_process($process_config, $config, $process_index, $num_processes) {
                 $errors = [$link];
                 $reject = [$link];
                 $count = mysqli_poll($ready, $errors, $reject, 1);
+                if ($resource_sampler !== null && microtime(true) - $last_resource_sample >= 1.0) {
+                    $resource_sampler();
+                    $last_resource_sample = microtime(true);
+                }
             } while ($count === 0);
             $result = mysqli_reap_async_query($link);
             if ($result instanceof mysqli_result) mysqli_free_result($result);
@@ -819,14 +852,17 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         }
     }
 
-    runSqlCommandsConcurrently($all_links, $process_config['worker_finalize_command'] ?? null);
+    runSqlCommandsConcurrently($all_links, $process_config['worker_finalize_command'] ?? null, $resource_sampler);
 
     // Close connections
     foreach ($all_links as $link) {
         mysqli_close($link);
     }
 
-    // Close monitoring connection
+    // Capture final values before closing the monitoring connection
+    if (!$config->get('quiet')) {
+        $progress->sampleResourceStats($monitoring);
+    }
     $monitoring->close();
 
     // Print final statistics
@@ -836,7 +872,8 @@ function run_process($process_config, $config, $process_index, $num_processes) {
         'init_command' => $process_config['init_command'] ?? null,
         'load_command' => $process_config['load_commands'] ?? $process_config['load_command'],
         'column' => $process_config['column'] ?? null,
-        'process_index' => $process_index
+        'process_index' => $process_index,
+        'peak_resource_stats' => $progress->getPeakResourceStats()
     ];
     $statistics->printReport($process_info);
 

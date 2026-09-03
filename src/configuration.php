@@ -487,8 +487,8 @@ class Configuration implements ArrayAccess {
             "  --host=HOST                  Manticore host (default: 127.0.0.1)\n" .
             "  --port=PORT                  Manticore port (default: 9306)\n" .
             "  --init=SQL                   SQL command to execute before loading (e.g., CREATE TABLE)\n" .
-            "  --worker-init=SQL            Semicolon-separated SQL run on each worker connection before timing\n" .
-            "  --worker-finalize=SQL        Semicolon-separated SQL run on each worker connection before reporting\n" .
+            "  --worker-init=SQL            Semicolon-separated SQL run on each worker connection before timing (MySQL mode only)\n" .
+            "  --worker-finalize=SQL        Semicolon-separated SQL run on each worker connection before reporting (MySQL mode only)\n" .
             "  --drop                       Drop table if exists\n" .
             "  --verbose                    Show prepared queries before execution\n" .
             "  --latency-histograms=[0|1]   Use histogram-based latency tracking (default: 1)\n" .
@@ -498,6 +498,7 @@ class Configuration implements ArrayAccess {
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
+            "  --wait                       After load, wait while table optimization is in progress\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
             "                               Each section after --together can have its own process-specific\n" .
             "                               options (threads, batch-size, load, etc). Global options\n" .
@@ -528,19 +529,8 @@ class Configuration implements ArrayAccess {
             "                               --init/--drop use SQL over /sql; --load uses JSON.\n" .
             "                               Default port 9308.\n" .
             "  --index=NAME                 Table name for /bulk and monitoring. If unset, taken from CREATE TABLE in --init.\n" .
-            "  --wait (--http)              After load, wait until table optimize finishes.\n" .
-            "  --worker-init/--worker-finalize are MySQL-only (not supported with --http).\n\n" .
             "  --load for writes is a document template (id optional); requests go to /bulk.\n" .
             "  --load for reads is a full /search JSON body (must include \"query\").\n\n" .
-            "# Load 1M documents in batches of 1000 over HTTP:\n" .
-            "manticore-load --http --index=test --port=9308 \\\n" .
-            "--drop --batch-size=1000 --threads=5 --total=1000000 \\\n" .
-            "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
-            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
-            "# Execute 10k search queries over HTTP:\n" .
-            "manticore-load --http --index=test --port=9308 \\\n" .
-            "--threads=5 --total=10000 \\\n" .
-            "--load='{\"index\":\"test\",\"query\":{\"query_string\":\"<text/1/3>\"}}'\n\n" .
             "Examples:\n\n" .
             "# Load 1M documents in batches of 1000:\n" .
             "manticore-load \\\n" .
@@ -564,7 +554,20 @@ class Configuration implements ArrayAccess {
             "--load=\"INSERT INTO test(id,name,type) VALUES(<increment>,'<text/10/100>',<int/1/100>)\" \\\n" .
             "--together \\\n" .
             "--threads=1 --total=5000 \\\n" .
-            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n"
+            "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n" .
+
+            "\nHTTP Mode Examples:\n\n" .
+
+            "# Load 1M documents in batches of 1000 over HTTP:\n" .
+            "manticore-load --http --index=test --port=9308 \\\n" .
+            "--drop --batch-size=1000 --threads=5 --total=1000000 \\\n" .
+            "--init=\"CREATE TABLE test(id bigint, name text, type int)\" \\\n" .
+            "--load='{\"id\":<increment>,\"name\":\"<text/10/100>\",\"type\":<int/1/100>}'\n\n" .
+
+            "# Execute 10k search queries over HTTP:\n" .
+            "manticore-load --http --index=test --port=9308 \\\n" .
+            "--threads=5 --total=10000 \\\n" .
+            "--load='{\"index\":\"test\",\"query\":{\"query_string\":\"<text/1/3>\"}}'\n\n"
         );
     }
 

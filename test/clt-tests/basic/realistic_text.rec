@@ -22,6 +22,9 @@ mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM realistic_text_smoke" | grep -oE '[
 printf 'word000 1000\nword001 900\nword002 800\nword003 700\nword004 600\nword005 500\nword006 400\nword007 300\nword008 200\nword009 100\n' > /tmp/manticore-load-english-frequency.txt
 ––– output –––
 ––– input –––
+mysql -h0 -P9306 -e "INSERT INTO realistic_text_smoke(id,body) VALUES (100, 'word000 word001 word002 word003 word004 word005 word006 word007 word008 word009')"
+––– output –––
+––– input –––
 ./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/common/1/1>')" > /dev/null; echo $?
 ––– output –––
 0

@@ -36,7 +36,7 @@ class Configuration implements ArrayAccess {
         'iterations:',
         'cache-gen-workers:',
         'cache-from-disk',
-        'text-model:', 'text-dictionary:', , 'seed:',
+        'text-model:', 'text-dictionary:', 'seed:',
         'verbose',
         'quiet',
         'json',

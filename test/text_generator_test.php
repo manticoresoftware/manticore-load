@@ -36,25 +36,68 @@ try {
     file_put_contents($tmp, "the 1000\nsearch 100\ndatabase 20\nrare 1\nnewword 3\n");
     check($old !== TextGenerator::fingerprint($opts, ['<text/2/2>']), 'Changed dictionary must invalidate cache');
 
+    // Exercise first-run download using a local fixture in the upstream format.
     $autoCache = '/tmp/manticore-load-english-frequency.txt';
     $existing = is_file($autoCache) ? file_get_contents($autoCache) : null;
+    $fixture = tempnam(sys_get_temp_dir(), 'gwordlist-');
+    $originalUrl = getenv('MANTICORE_LOAD_DICTIONARY_URL');
     try {
-        file_put_contents($autoCache, "the 1000\nsearch 100\ndatabase 20\n");
-        $auto = new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => 'auto', 'seed' => 42]);
+        @unlink($autoCache);
+        file_put_contents($fixture,
+            "#RANKING WORD COUNT PERCENT CUMULATIVE\n" .
+            "1 the 1,000 50% 50%\n" .
+            "2 search 100 5% 55%\n" .
+            "3 database 20 1% 56%\n"
+        );
+        putenv('MANTICORE_LOAD_DICTIONARY_URL=file://' . $fixture);
+        $auto = new TextGenerator(['text-model' => 'realistic', 'seed' => 42]);
         $sample = $auto->generate(10, 10);
-        check(count(explode(' ', $sample)) === 10, 'Auto cached vocabulary must generate ten words');
-        $tokens = preg_split('/\\s+/', strtolower(trim($sample)));
+        check(is_file($autoCache), 'Automatic dictionary must be cached in /tmp');
+        check(str_contains(file_get_contents($autoCache), "the 1000\n"), 'Dictionary download must parse upstream counts');
+        check(count(explode(' ', $sample)) === 10, 'Downloaded vocabulary must generate ten words');
+
+        // The cache works offline and its contents affect generated-query cache keys.
+        putenv('MANTICORE_LOAD_DICTIONARY_URL=file:///missing-fixture');
+        $tokens = preg_split('/\s+/', strtolower($auto->generate(10, 10)));
         foreach ($tokens as $token) {
             check(in_array(rtrim($token, '.,'), ['the', 'search', 'database'], true),
-                'Auto dictionary should use words from cached source');
+                'Automatic dictionary must use cached words when offline');
         }
-        check(TextGenerator::fingerprint(['text-dictionary' => 'auto'], ['<text/2/2>']) !== '',
-            'Automatic dictionary should work without downloading during fingerprint');
+        $cacheOpts = ['text-model' => 'realistic', 'seed' => 42];
+        $key1 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
+        file_put_contents($autoCache, "the 1000\nsearch 100\ndatabase 20\nextra 3\n");
+        $key2 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
+        check($key1 !== $key2, 'Changed cached dictionary must invalidate generated-query cache');
+        check($key2 === TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']),
+            'Cached dictionary fingerprint must be stable');
+        check($key2 !== TextGenerator::fingerprint(['text-model' => 'legacy', 'seed' => 42], ['<text/2/2>']),
+            'Different text models must have different cache keys');
+
+        // Failed/invalid downloads must leave no cache and allow retry.
+        @unlink($autoCache);
+        file_put_contents($fixture, "this is not a frequency list\n");
+        putenv('MANTICORE_LOAD_DICTIONARY_URL=file://' . $fixture);
+        $failed = false;
+        try {
+            (new TextGenerator(['text-model' => 'realistic']))->generate(1, 1);
+        } catch (RuntimeException $e) {
+            $failed = true;
+        }
+        check($failed && !is_file($autoCache), 'Invalid download must not leave a cache');
     } finally {
+        @unlink($fixture);
+        if ($originalUrl === false) putenv('MANTICORE_LOAD_DICTIONARY_URL');
+        else putenv('MANTICORE_LOAD_DICTIONARY_URL=' . $originalUrl);
         if ($existing === null) @unlink($autoCache);
         else file_put_contents($autoCache, $existing);
     }
 
+    $caps = (new TextGenerator([
+        'text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 7,
+    ]))->generate(300, 300);
+    check((bool)preg_match('/\.\s+[A-Z]/', $caps), 'Words after sentence boundaries must be capitalized');
+    check((new TextGenerator(['text-model' => 'realistic']))->generate(0, 0) === '',
+        'Zero-length documents must not require a dictionary download');
     check((new TextGenerator(['text-model' => 'legacy']))->generate(3, 3) !== '',
         'Legacy text generation must remain available');
     echo "Text generator tests passed\n";

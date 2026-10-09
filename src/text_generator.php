@@ -112,7 +112,7 @@ class TextGenerator {
         $paths = [];
         $usesDefaultText = false;
         foreach ($commands as $command) {
-            if (preg_match('/<text\\/\\d+\\/\\d+>/', $command)) $usesDefaultText = true;
+            if (preg_match('/<text\\/(?:(?:common|medium|rare)\\/)?\\d+\\/\\d+>/', $command)) $usesDefaultText = true;
             if (preg_match_all('/text\\/\\{([^}]+)\\}/', $command, $matches)) {
                 array_push($paths, ...$matches[1]);
             }

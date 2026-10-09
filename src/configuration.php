@@ -559,10 +559,6 @@ class Configuration implements ArrayAccess {
             "--drop --threads=4 --batch-size=1000 --total=100000 \\\n" .
             "--init=\"CREATE TABLE realistic_docs(body text)\" \\\n" .
             "--load=\"INSERT INTO realistic_docs(id,body) VALUES(<increment>,'<text/50/300>')\"\n\n" .
-            "# --realistic: run 1,000 search queries with frequency-weighted words:\n" .
-            "manticore-load --realistic \\\n" .
-            "--threads=4 --total=1000 \\\n" .
-            "--load=\"SELECT * FROM realistic_docs WHERE MATCH('<text/1/1>') LIMIT 20\"\n\n" .
             "# --realistic: search with rare terms:\n" .
             "manticore-load --realistic \\\n" .
             "--threads=4 --total=1000 \\\n" .

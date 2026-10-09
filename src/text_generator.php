@@ -182,13 +182,27 @@ class TextGenerator {
         }
     }
 
-    public function generate($minWords, $maxWords, $file = null) {
+    public function generate($minWords, $maxWords, $file = null, $tier = null) {
         $minWords = (int)$minWords;
         $maxWords = (int)$maxWords;
         if ($minWords < 0 || $maxWords < $minWords) {
             throw new InvalidArgumentException('Invalid text word count bounds');
         }
+        if ($tier !== null && !in_array($tier, ['common', 'medium', 'rare'], true)) {
+            throw new InvalidArgumentException('Unknown text frequency tier');
+        }
+        if ($tier !== null && !$this->realistic) {
+            throw new InvalidArgumentException('Frequency-tier text patterns require --realistic');
+        }
         if ($maxWords === 0) return '';
+        if ($tier !== null) {
+            $path = $file ?? self::automaticDictionary();
+            $sampler = $this->tierSampler($path, $tier);
+            $count = $this->random->between($minWords, $maxWords);
+            $words = [];
+            for ($i = 0; $i < $count; $i++) $words[] = $sampler->sample($this->random);
+            return implode(' ', $words);
+        }
         if (!$this->realistic) {
             return QueryGenerator::generateRandomText($minWords, $maxWords, $file);
         }
@@ -239,6 +253,40 @@ class TextGenerator {
         $u = max($this->random->nextFloat(), 1e-12);
         $z = sqrt(-2 * log($u)) * cos(2 * M_PI * $this->random->nextFloat());
         return max($min, min($max, (int)round($median * exp($sigma * $z))));
+    }
+
+    private function tierSampler($path, $tier) {
+        $key = (realpath($path) ?: $path) . ':' . $tier;
+        if (isset($this->vocabularies[$key])) return $this->vocabularies[$key];
+
+        $counts = [];
+        $handle = @fopen($path, 'r');
+        if (!$handle) throw new RuntimeException("Cannot read dictionary: $path");
+        try {
+            while (($line = fgets($handle)) !== false) {
+                $line = trim($line);
+                if (preg_match('/^([\\p{L}\\p{N}_-]+)\\s+([0-9]+(?:\\.[0-9]+)?)$/u', $line, $m)) {
+                    $word = strtolower($m[1]);
+                    $counts[$word] = ($counts[$word] ?? 0) + (float)$m[2];
+                } elseif (preg_match('/^[\\p{L}\\p{N}_-]+$/u', $line)) {
+                    $word = strtolower($line);
+                    $counts[$word] = ($counts[$word] ?? 0) + 1;
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+        if (!$counts) throw new RuntimeException("Empty dictionary: $path");
+        arsort($counts, SORT_NUMERIC);
+        $count = count($counts);
+        $commonEnd = max(1, (int)ceil($count * 0.01));
+        $mediumEnd = max($commonEnd + 1, (int)ceil($count * 0.20));
+        $mediumEnd = min($count, $mediumEnd);
+        $start = $tier === 'common' ? 0 : ($tier === 'medium' ? $commonEnd : $mediumEnd);
+        $end = $tier === 'common' ? $commonEnd : ($tier === 'medium' ? $mediumEnd : $count);
+        if ($start >= $end) throw new RuntimeException("Not enough distinct words for $tier frequency tier");
+        $slice = array_slice($counts, $start, $end - $start, true);
+        return $this->vocabularies[$key] = new TextWeightedSampler(array_keys($slice), array_values($slice));
     }
 
     private function sampler($path) {

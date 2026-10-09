@@ -36,7 +36,7 @@ class Configuration implements ArrayAccess {
         'iterations:',
         'cache-gen-workers:',
         'cache-from-disk',
-        'text-model:', 'text-dictionary:', 'text-weighting:', 'zipf-exponent:', 'zipf-shift:', 'text-burstiness:', 'text-length:', 'text-topic-strength:', 'text-topics-file:', 'text-heaps-beta:', 'text-heaps-scale:', 'seed:',
+        'text-model:', 'text-dictionary:', , 'seed:',
         'verbose',
         'quiet',
         'json',
@@ -69,15 +69,6 @@ class Configuration implements ArrayAccess {
         'cache-from-disk' => false,
         'text-model' => 'legacy',
         'text-dictionary' => null,
-        'text-weighting' => 'auto',
-        'zipf-exponent' => 1,
-        'zipf-shift' => 2.7,
-        'text-burstiness' => 0.12,
-        'text-length' => 'auto',
-        'text-topic-strength' => 1,
-        'text-topics-file' => null,
-        'text-heaps-beta' => 0.55,
-        'text-heaps-scale' => 0.65,
         'seed' => 42,
         'delay' => 0,
         'http' => false,
@@ -124,7 +115,7 @@ class Configuration implements ArrayAccess {
             'drop', 'batch-size', 'threads', 'total', 
             'iterations', 'init', 'worker-init', 'worker-finalize', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
             'cache-from-disk',
-            'text-model', 'text-dictionary', 'text-weighting', 'zipf-exponent', 'zipf-shift', 'text-burstiness', 'text-length', 'text-topic-strength', 'text-topics-file', 'text-heaps-beta', 'text-heaps-scale', 'seed'
+            'text-model', 'text-dictionary', 'seed'
         ];
         $index = 1;
         
@@ -513,15 +504,6 @@ class Configuration implements ArrayAccess {
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
             "  --text-model=VALUE    Text generator setting (default: legacy)\n" .
             "  --text-dictionary=VALUE    Text generator setting (default: null)\n" .
-            "  --text-weighting=VALUE    Text generator setting (default: auto)\n" .
-            "  --zipf-exponent=VALUE    Text generator setting (default: 1)\n" .
-            "  --zipf-shift=VALUE    Text generator setting (default: 2.7)\n" .
-            "  --text-burstiness=VALUE    Text generator setting (default: 0.12)\n" .
-            "  --text-length=VALUE    Text generator setting (default: auto)\n" .
-            "  --text-topic-strength=VALUE    Text generator setting (default: 1)\n" .
-            "  --text-topics-file=VALUE    Text generator setting (default: null)\n" .
-            "  --text-heaps-beta=VALUE    Text generator setting (default: 0.55)\n" .
-            "  --text-heaps-scale=VALUE    Text generator setting (default: 0.65)\n" .
             "  --seed=VALUE    Text generator setting (default: 42)\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --wait                       After load, wait while table optimization is in progress\n" .

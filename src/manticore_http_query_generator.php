@@ -79,7 +79,7 @@ class ManticoreHttpQueryGenerator {
     /** @var resource|false|null Stop-flag shared memory (null = not opened) */
     private $stop_shm_id = null;
     private static $supported_pattern_types = [
-        'increment', 'string', 'text', 'text_query', 'int', 'float', 'boolean', 'array', 'array_float', 'bigint'
+        'increment', 'string', 'text', 'int', 'float', 'boolean', 'array', 'array_float', 'bigint'
     ];
 
     /**
@@ -428,9 +428,6 @@ class ManticoreHttpQueryGenerator {
                 );
                 $enc = json_encode($v);
                 return substr($enc, 1, -1);
-            case 'text_query':
-                $v = $this->text_generator->generate($pattern['min_words'], $pattern['max_words'], $pattern['file_path'] ?? null, $pattern['tier']);
-                return substr(json_encode($v), 1, -1);
             case 'int':
             case 'bigint':
                 return (string)rand($pattern['min'] ?? 0, $pattern['max'] ?? PHP_INT_MAX);

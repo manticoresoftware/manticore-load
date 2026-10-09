@@ -113,7 +113,7 @@ class ManticoreHttpQueryGenerator {
                 $this->stop_shm_id = null;
             }
         }
-        srand((int)($config->get('seed') ?? 42));
+        srand(42);
         $this->text_generator = new TextGenerator($config);
     }
 

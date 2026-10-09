@@ -151,8 +151,8 @@ class TextGenerator {
             clearstatcache(true, $path);
             if (is_readable($path) && filesize($path) > 0) return $path;
             // Override the source in offline tests or private environments.
-            $url = getenv('MANTICORE_LOAD_DICTIONARY_URL') ?:
-                'https://raw.githubusercontent.com/hackerb9/gwordlist/5e9902468ab09802474884c3df00d77463e5cb24/frequency-alpha-alldicts.txt';
+            $override = getenv('MANTICORE_LOAD_DICTIONARY_URL');
+            $url = $override ?: 'https://raw.githubusercontent.com/hackerb9/gwordlist/5e9902468ab09802474884c3df00d77463e5cb24/frequency-alpha-alldicts.txt';
             $source = @fopen($url, 'rb');
             if (!$source) throw new RuntimeException('Cannot download English frequency dictionary');
             $tmp = tempnam('/tmp', 'manticore-dict-');
@@ -186,9 +186,11 @@ class TextGenerator {
                 fclose($source);
                 fclose($out);
             }
-            if (!$count || !rename($tmp, $path)) {
+            // Reject partial downloads from the pinned 246k-word upstream source.
+            $minWords = $override ? 1 : 200000;
+            if ($count < $minWords || !rename($tmp, $path)) {
                 @unlink($tmp);
-                throw new RuntimeException('Downloaded dictionary contains no usable words');
+                throw new RuntimeException("Downloaded dictionary is incomplete ($count words)");
             }
             return $path;
         } finally {
@@ -213,6 +215,7 @@ class TextGenerator {
         $length = $this->documentLength($minWords, $maxWords);
         $words = [];
         $reusable = [];
+        $reusePos = 0;
         $sentence = $this->random->between(8, 20);
         $capitalize = true;
         for ($i = 0; $i < $length; $i++) {
@@ -223,8 +226,12 @@ class TextGenerator {
                 $word = $sampler->sample($this->random);
             }
             if ($i > 0 && strlen($word) > 3) {
-                $reusable[] = $word;
-                if (count($reusable) > 200) array_shift($reusable);
+                if (count($reusable) < 200) {
+                    $reusable[] = $word;
+                } else {
+                    $reusable[$reusePos] = $word;
+                    $reusePos = ($reusePos + 1) % 200;
+                }
             }
             if ($capitalize) $word = ucfirst($word);
             $capitalize = false;

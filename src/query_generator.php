@@ -152,13 +152,16 @@ class QueryGenerator {
     private $is_tty = true;
     private static $words = null;
     private static $words_count = null;
+    private static $current_words_path = null;
     private $process_index;
     private $stop_shm_id;
     private $cache_from_disk = false;
+    private $text_generator;
     private static $supported_pattern_types = [
         'increment',
         'string',
         'text',
+        'text_query',
         'int',
         'float',
         'boolean',
@@ -173,7 +176,8 @@ class QueryGenerator {
      */
     public function __construct(Configuration $config, $main_script_path) {
         // Set fixed seed for random number generation
-        srand(42); // Using constant value 42 as seed
+        srand((int)($config->get('seed') ?? 42));
+        $this->text_generator = new TextGenerator($config);
         
         $this->config = $config;
         $this->process_index = $config->get('process_index');
@@ -226,11 +230,59 @@ class QueryGenerator {
      * @param string|null $filePath Optional path to file to source words from (if null, uses internal word list)
      * @return string Generated text
      */
+    public static function builtinVocabulary() {
+        return array(
+                    'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
+                    'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
+                    'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
+                    'would', 'could', 'should', 'will', 'may', 'might', 'must', 'shall', 'can', 'had',
+                    'has', 'was', 'were', 'been', 'being', 'am', 'is', 'are', 'does', 'did',
+                    'go', 'went', 'gone', 'see', 'saw', 'seen', 'take', 'took', 'taken', 'make',
+                    'made', 'find', 'found', 'get', 'got', 'give', 'gave', 'think', 'thought', 'know',
+                    'knew', 'come', 'came', 'tell', 'told', 'work', 'worked', 'call', 'called', 'try',
+                    'tried', 'ask', 'asked', 'need', 'needed', 'feel', 'felt', 'become', 'became', 'leave',
+                    'left', 'put', 'run', 'ran', 'bring', 'brought', 'begin', 'began', 'keep', 'kept',
+                    'hold', 'held', 'write', 'wrote', 'stand', 'stood', 'hear', 'heard', 'let', 'set',
+                    'meet', 'met', 'pay', 'paid', 'sit', 'sat', 'speak', 'spoke', 'lie', 'lay',
+                    'lead', 'led', 'read', 'grow', 'grew', 'lose', 'lost', 'fall', 'fell', 'send',
+                    'sent', 'build', 'built', 'understand', 'understood', 'draw', 'drew', 'break', 'broke', 'spend',
+                    'spent', 'cut', 'hurt', 'sell', 'sold', 'rise', 'rose', 'drive', 'drove', 'buy',
+                    'beautiful', 'happy', 'sad', 'angry', 'excited', 'tired', 'hungry', 'thirsty', 'cold', 'hot',
+                    'big', 'small', 'tall', 'short', 'fat', 'thin', 'old', 'young', 'rich', 'poor',
+                    'fast', 'slow', 'early', 'late', 'hard', 'soft', 'loud', 'quiet', 'clean', 'dirty',
+                    'dark', 'light', 'heavy', 'light', 'strong', 'weak', 'wet', 'dry', 'good', 'bad',
+                    'high', 'low', 'long', 'short', 'wide', 'narrow', 'deep', 'shallow', 'thick', 'thin',
+                    'smooth', 'rough', 'sharp', 'dull', 'sweet', 'sour', 'bitter', 'salty', 'fresh', 'stale',
+                    'new', 'old', 'modern', 'ancient', 'wild', 'tame', 'brave', 'afraid', 'proud', 'humble',
+                    'wise', 'foolish', 'clever', 'stupid', 'kind', 'cruel', 'gentle', 'rough', 'calm', 'angry',
+                    'busy', 'lazy', 'careful', 'careless', 'serious', 'funny', 'happy', 'sad', 'rich', 'poor',
+                    'healthy', 'sick', 'alive', 'dead', 'right', 'wrong', 'true', 'false', 'real', 'fake',
+                    'open', 'closed', 'empty', 'full', 'heavy', 'light', 'hard', 'soft', 'hot', 'cold',
+                    'summer', 'winter', 'spring', 'autumn', 'morning', 'evening', 'night', 'day', 'dawn', 'dusk',
+                    'north', 'south', 'east', 'west', 'up', 'down', 'left', 'right', 'front', 'back',
+                    'inside', 'outside', 'above', 'below', 'near', 'far', 'here', 'there', 'everywhere', 'nowhere',
+                    'always', 'never', 'sometimes', 'often', 'rarely', 'usually', 'now', 'then', 'soon', 'later',
+                    'today', 'tomorrow', 'yesterday', 'weekly', 'monthly', 'yearly', 'daily', 'nightly', 'hourly', 'instantly',
+                    'quickly', 'slowly', 'suddenly', 'gradually', 'carefully', 'carelessly', 'quietly', 'loudly', 'softly', 'harshly',
+                    'easily', 'hardly', 'simply', 'complexly', 'naturally', 'artificially', 'personally', 'professionally', 'publicly', 'privately',
+                    'legally', 'illegally', 'formally', 'informally', 'physically', 'mentally', 'emotionally', 'spiritually', 'socially', 'individually',
+                    'politically', 'economically', 'culturally', 'historically', 'scientifically', 'artistically', 'musically', 'technically', 'medically', 'educationally',
+                    'locally', 'globally', 'nationally', 'internationally', 'regionally', 'universally', 'specifically', 'generally', 'particularly', 'commonly',
+                    'normally', 'unusually', 'regularly', 'irregularly', 'frequently', 'infrequently', 'occasionally', 'constantly', 'permanently', 'temporarily',
+                    'actively', 'passively', 'positively', 'negatively', 'directly', 'indirectly', 'correctly', 'incorrectly', 'successfully', 'unsuccessfully',
+                    'fortunately', 'unfortunately', 'happily', 'unhappily', 'luckily', 'unluckily', 'surprisingly', 'expectedly', 'obviously', 'subtly',
+                    'definitely', 'possibly', 'probably', 'certainly', 'maybe', 'perhaps', 'surely', 'doubtfully', 'clearly', 'vaguely',
+                    '1', '2', '3', '4', '5', '10', '20', '50', '100', '1000'
+        );
+    }
+
     public static function generateRandomText($minWords, $maxWords, $filePath = null) {
         static $punctuation = array('.', '!', '?', ',', ';');
         
         // Initialize word list only once
-        if (self::$words === null) {
+        if (self::$words === null || self::$current_words_path !== $filePath) {
+            self::$current_words_path = $filePath;
+            self::$words_count = null;
             if ($filePath !== null) {
                 self::loadWordsFromFile($filePath);
             } else {
@@ -364,6 +416,12 @@ class QueryGenerator {
                     'max_length' => (int)$parts[2]
                 ];
                 
+            case 'text_query':
+                if (count($parts) !== 4 || !in_array($parts[1], ['common', 'medium', 'rare', 'any'], true)) {
+                    throw new Exception('Text query format: text_query/common|medium|rare|any/min_words/max_words');
+                }
+                return ['type' => 'text_query', 'tier' => $parts[1], 'min_words' => (int)$parts[2], 'max_words' => (int)$parts[3]];
+
             case 'text':
                 if (count($parts) !== 3) {
                     throw new Exception("Text pattern requires format: text/min_words/max_words or text/{path/to/file}/min_words/max_words");
@@ -460,11 +518,14 @@ class QueryGenerator {
                 );
                 
             case 'text':
-                return self::generateRandomText(
+                return $this->text_generator->generate(
                     $pattern['min_words'] ?? 20,
                     $pattern['max_words'] ?? 300,
                     $pattern['file_path'] ?? null
                 );
+                
+            case 'text_query':
+                return $this->text_generator->generate($pattern['min_words'], $pattern['max_words'], $pattern['file_path'] ?? null, $pattern['tier']);
                 
             case 'int':
                 return rand($pattern['min'] ?? 0, $pattern['max'] ?? PHP_INT_MAX);
@@ -512,7 +573,8 @@ class QueryGenerator {
             $this->config->get('total'),
             $this->config->get('batch-size'),
             $this->config->get('cache-gen-workers'),
-            $this->config->get('process_index')
+            $this->config->get('process_index'),
+            TextGenerator::fingerprint($this->config, $this->load_commands)
         ]);
         
         return '/tmp/manticore_load_' . md5($cache_key);
@@ -861,9 +923,10 @@ class QueryGenerator {
     }
 
     private function runCacheWorker($load_index, $start_row, $rows, $cache_file_name, $worker_index, $progress_file) {
-        srand(42 + $worker_index);
+        srand((int)($this->config->get('seed') ?? 42) + $worker_index);
+        $this->text_generator->reseedWorker($worker_index);
         if (function_exists('mt_srand')) {
-            mt_srand(42 + $worker_index);
+            mt_srand((int)($this->config->get('seed') ?? 42) + $worker_index);
         }
 
         $this->initializeIncrementCountersForRange($load_index, $start_row);

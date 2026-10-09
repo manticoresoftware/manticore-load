@@ -358,3 +358,48 @@ This project is licensed under the MIT License. See the [LICENSE](./LICENSE) fil
 ## Contributing
 
 Contributions are welcome! Please open issues or submit pull requests on GitHub.
+
+### More realistic synthetic text
+
+By default `<text/MIN/MAX>` preserves its historical, uniform word selection.
+Opt in to the Zipf–Mandelbrot model or a more realistic document model:
+
+```bash
+manticore-load --text-model=realistic --seed=42 \
+  --total=100000 --batch-size=1000 \
+  --init="CREATE TABLE t(body text)" \
+  --load="INSERT INTO t(body) VALUES('<text/50/300>')"
+```
+
+For better vocabulary coverage, supply a custom dictionary. Accepted formats:
+- one word per line, ranked from most to least frequent (Zipf weights);
+- `word count` per line (empirical weights unless `--text-weighting=zipf`);
+- unstructured text, from which empirical word counts are computed.
+
+`--text-model=zipf` samples tokens independently using Zipf–Mandelbrot weights
+(default exponent 1, shift 2.7); `realistic` adds topical grouping, repeated
+content words, sentence structure, a truncated lognormal distribution of
+document lengths, and synthesized rare tokens. Heaps-like vocabulary growth is
+approximate and should be calibrated against the target corpus rather than
+interpreted as an exact Heaps-law guarantee. Topic assignment is heuristic by
+default; use `--text-topics-file` with lines `technology database`, etc.
+for explicit topic membership.
+
+Options include `--text-weighting=auto|zipf|empirical`,
+`--zipf-exponent`, `--zipf-shift`, `--text-burstiness` (0..1),
+`--text-topic-strength` (0..1), `--text-length=auto|uniform|lognormal`,
+`--text-heaps-beta`, `--text-heaps-scale`, `--seed`.
+Large dictionaries take memory proportional to vocabulary size and alias tables.
+Synthetic rare words are designed for posting-list statistics, not
+linguistic semantics.
+
+For search queries, `<text_query/common/1/2>`,
+`<text_query/medium/1/2>`, and `<text_query/rare/1/2>` sample frequency
+tiers without punctuation. These are lexical rank tiers, not guaranteed DF
+ranges. For accurate selectivity, measure actual DF after indexing.
+
+The generator respects the seed and uses distinct seeds for cache workers.
+Changing worker count can change the data. Cache keys incorporate the model
+configuration and dictionary contents.
+
+Run the standalone statistical checks with `php test/text_generator_test.php`.

@@ -65,6 +65,7 @@ function findRequiredFile($filename) {
 // Load required files
 $required_files = [
     'configuration.php',
+    'text_generator.php',
     'query_generator.php',
     'statistics.php',
     'progress_display.php',
@@ -514,7 +515,7 @@ function run_process($process_config, $config, $process_index, $num_processes) {
     $process_configuration = new Configuration([]);
     
     // Inherit global settings from main configuration
-    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms'];
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'text-model', 'text-dictionary', 'text-weighting', 'zipf-exponent', 'zipf-shift', 'text-burstiness', 'text-length', 'text-topic-strength', 'text-topics-file', 'text-heaps-beta', 'text-heaps-scale', 'seed'];
     foreach ($global_settings as $setting) {
         $process_configuration->set($setting, $config->get($setting));
     }
@@ -895,7 +896,7 @@ function run_process_manticore_http($process_config, $config, $process_index, $n
     global $shm_id, $sem_id, $stop_shm_id;
 
     $process_configuration = new Configuration([]);
-    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'http', 'table', 'cache-from-disk', 'cache-gen-workers'];
+    $global_settings = ['host', 'port', 'quiet', 'verbose', 'wait', 'latency-histograms', 'http', 'table', 'cache-from-disk', 'cache-gen-workers', 'text-model', 'text-dictionary', 'text-weighting', 'zipf-exponent', 'zipf-shift', 'text-burstiness', 'text-length', 'text-topic-strength', 'text-topics-file', 'text-heaps-beta', 'text-heaps-scale', 'seed'];
     foreach ($global_settings as $setting) {
         $val = $config->get($setting);
         if ($val !== null) {

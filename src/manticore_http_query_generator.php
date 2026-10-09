@@ -74,11 +74,12 @@ class ManticoreHttpQueryGenerator {
     private $increment_counters = [];
     private $cache_file_name;
     private $cache_from_disk = false;
+    private $text_generator;
     private $process_index = 1;
     /** @var resource|false|null Stop-flag shared memory (null = not opened) */
     private $stop_shm_id = null;
     private static $supported_pattern_types = [
-        'increment', 'string', 'text', 'int', 'float', 'boolean', 'array', 'array_float', 'bigint'
+        'increment', 'string', 'text', 'text_query', 'int', 'float', 'boolean', 'array', 'array_float', 'bigint'
     ];
 
     /**
@@ -112,7 +113,8 @@ class ManticoreHttpQueryGenerator {
                 $this->stop_shm_id = null;
             }
         }
-        srand(42);
+        srand((int)($config->get('seed') ?? 42));
+        $this->text_generator = new TextGenerator($config);
     }
 
     private function isStopRequested() {
@@ -136,7 +138,8 @@ class ManticoreHttpQueryGenerator {
             $this->config->get('batch-size'),
             $this->config->get('cache-gen-workers'),
             $this->process_index,
-            $indexName
+            $indexName,
+            TextGenerator::fingerprint($this->config, $this->load_commands)
         ]);
         return '/tmp/manticore_load_http_' . md5($cache_key);
     }
@@ -418,13 +421,16 @@ class ManticoreHttpQueryGenerator {
                 $enc = json_encode($v);
                 return substr($enc, 1, -1);
             case 'text':
-                $v = QueryGenerator::generateRandomText(
+                $v = $this->text_generator->generate(
                     $pattern['min_words'] ?? 20,
                     $pattern['max_words'] ?? 300,
                     $pattern['file_path'] ?? null
                 );
                 $enc = json_encode($v);
                 return substr($enc, 1, -1);
+            case 'text_query':
+                $v = $this->text_generator->generate($pattern['min_words'], $pattern['max_words'], $pattern['file_path'] ?? null, $pattern['tier']);
+                return substr(json_encode($v), 1, -1);
             case 'int':
             case 'bigint':
                 return (string)rand($pattern['min'] ?? 0, $pattern['max'] ?? PHP_INT_MAX);

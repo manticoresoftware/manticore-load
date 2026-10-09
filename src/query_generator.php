@@ -375,7 +375,7 @@ class QueryGenerator {
                 
             case 'text':
                 if (count($parts) === 4 && in_array($parts[1], ['common', 'medium', 'rare'], true)) {
-                    if (!ctype_digit($parts[2]) || !ctype_digit($parts[3]) || (int)$parts[2] > (int)$parts[3]) {
+                    if (!preg_match('/^[0-9]+$/D', $parts[2]) || !preg_match('/^[0-9]+$/D', $parts[3]) || (int)$parts[2] > (int)$parts[3]) {
                         throw new Exception("Text frequency pattern requires format: text/common|medium|rare/min_words/max_words");
                     }
                     return [

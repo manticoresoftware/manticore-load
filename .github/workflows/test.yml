@@ -20,6 +20,8 @@ jobs:
               php -l src/configuration.php
               php -l manticore-load
               php test/text_generator_test.php
+          - name: Live English dictionary download and sampling
+            run: MANTICORE_LOAD_LIVE_DICTIONARY_TEST=1 php test/text_generator_test.php
 
    
     clt-help:

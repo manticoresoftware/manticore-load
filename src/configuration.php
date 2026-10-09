@@ -521,9 +521,9 @@ class Configuration implements ArrayAccess {
             "  <increment/1000>             Auto-incrementing value starting from 1000\n" .
             "  <string/3/10>                Random string, length between 3 and 10\n" .
             "  <text/20/100>                Random text with 20 to 100 words\n" .
-            "  <text/common/1/2>             Frequent search terms (--realistic only)\n" .
-            "  <text/medium/1/2>             Medium-frequency search terms (--realistic only)\n" .
-            "  <text/rare/1/2>               Rare search terms (--realistic only)\n" .
+            "  <text/common/1/2>            Frequent search terms (--realistic only)\n" .
+            "  <text/medium/1/2>            Medium-frequency search terms (--realistic only)\n" .
+            "  <text/rare/1/2>              Rare search terms (--realistic only)\n" .
             "  <text/{/path/to/file}/10/100> Random text using words from file, 10 to 100 words\n" .
             "  <int/1/100>                  Random integer between 1 and 100\n" .
             "  <float/1/1000>               Random float between 1 and 1000\n" .

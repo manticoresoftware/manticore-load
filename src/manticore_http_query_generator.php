@@ -424,7 +424,8 @@ class ManticoreHttpQueryGenerator {
                 $v = $this->text_generator->generate(
                     $pattern['min_words'] ?? 20,
                     $pattern['max_words'] ?? 300,
-                    $pattern['file_path'] ?? null
+                    $pattern['file_path'] ?? null,
+                    $pattern['frequency_tier'] ?? null
                 );
                 $enc = json_encode($v);
                 return substr($enc, 1, -1);

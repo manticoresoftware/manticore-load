@@ -111,6 +111,42 @@ try {
     }
     check($totalWords / 250 < 400, 'Lognormal lengths must favor shorter documents');
 
+    // Frequency tiers follow ranks after sorting by empirical frequency.
+    $tiers = tempnam(sys_get_temp_dir(), 'text-tiers-');
+    $tierLines = [];
+    for ($i = 0; $i < 100; $i++) {
+        $tierLines[] = sprintf("word%03d %d", $i, 1000 - $i * 9);
+    }
+    file_put_contents($tiers, implode("\n", $tierLines) . "\n");
+    try {
+        $tierGenerator = new TextGenerator(['realistic' => true]);
+        foreach (['common' => [0, 1], 'medium' => [1, 20], 'rare' => [20, 100]] as $tier => $range) {
+            for ($j = 0; $j < 100; $j++) {
+                $query = $tierGenerator->generate(1, 3, $tiers, $tier);
+                $tokens = explode(' ', $query);
+                check(count($tokens) >= 1 && count($tokens) <= 3, 'Invalid query length for ' . $tier);
+                foreach ($tokens as $token) {
+                    check((bool)preg_match('/^word[0-9]{3}$/', $token), 'Query terms must be plain tokens');
+                    $rank = (int)substr($token, 4);
+                    check($rank >= $range[0] && $rank < $range[1], 'Incorrect frequency tier: ' . $tier);
+                }
+            }
+        }
+        check(QueryGenerator::parsePattern('text/rare/1/3')['frequency_tier'] === 'rare',
+            'Tier pattern must be parsed');
+        foreach (['text/rare/no/3', 'text/rare/4/1', 'text/unknown/1/2'] as $bad) {
+            $failed = false;
+            try { QueryGenerator::parsePattern($bad); } catch (Exception $e) { $failed = true; }
+            check($failed, 'Invalid frequency pattern must fail: ' . $bad);
+        }
+        $failed = false;
+        try { (new TextGenerator(['realistic' => false]))->generate(1, 1, $tiers, 'common'); }
+        catch (InvalidArgumentException $e) { $failed = true; }
+        check($failed, 'Tier queries require --realistic');
+    } finally {
+        @unlink($tiers);
+    }
+
     // Optional live smoke test, for checking the pinned upstream dictionary.
     // Intentionally not part of the default offline test suite.
     if (getenv('MANTICORE_LOAD_LIVE_DICTIONARY_TEST') === '1') {

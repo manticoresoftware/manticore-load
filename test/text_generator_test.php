@@ -39,6 +39,29 @@ try {
     file_put_contents($tmp, "the 1000\nsearch 100\ndatabase 20\nrare 1\nnewword 3\n");
     check($old !== TextGenerator::fingerprint($opts, ['<text/2/2>']), 'Changed dictionaries must invalidate caches');
 
+    // Prepopulate the /tmp cache: this checks the offline cache-hit path.
+    $autoCache = '/tmp/manticore-load-english-frequency.txt';
+    $existingCache = is_file($autoCache) ? file_get_contents($autoCache) : null;
+    try {
+        file_put_contents($autoCache, "the 1000\nsearch 100\ndatabase 20\n");
+        $automatic = new TextGenerator([
+            'text-model' => 'zipf', 'text-dictionary' => 'auto',
+            'text-weighting' => 'empirical', 'seed' => 42,
+        ]);
+        $sample = $automatic->generate(10, 10, null, 'any');
+        check(count(explode(' ', $sample)) === 10, 'Automatic cached dictionary must supply words');
+        check((bool)preg_match('/^(the|search|database)( (the|search|database)){9}$/', $sample),
+            'Automatic dictionary must use the cached frequency words');
+        check(TextGenerator::fingerprint(['text-dictionary' => 'auto'], ['<text/2/2>']) !== '',
+            'Automatic dictionary must be fingerprintable without a local input file');
+    } finally {
+        if ($existingCache === null) {
+            @unlink($autoCache);
+        } else {
+            file_put_contents($autoCache, $existingCache);
+        }
+    }
+
     $text = (new TextGenerator(['text-model' => 'realistic', 'seed' => 42, 'text-heaps-scale' => 1]))->generate(100, 100);
     check(strlen($text) > 100, 'Built-in vocabulary must produce text');
     echo "Text generator tests passed\n";

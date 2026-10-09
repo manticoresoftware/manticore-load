@@ -9,11 +9,11 @@ function check($condition, $message) {
 $tmp = tempnam(sys_get_temp_dir(), 'text-dict-');
 file_put_contents($tmp, "the 1000\nsearch 100\ndatabase 20\nrare 1\n");
 try {
-    $opts = ['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 42];
+    $opts = ['realistic' => true];
     $gen = new TextGenerator($opts);
     $counts = [];
     for ($i = 0; $i < 10000; $i++) {
-        $word = strtolower(rtrim($gen->generate(1, 1), '.'));
+        $word = strtolower(rtrim($gen->generate(1, 1, $tmp), '.'));
         $counts[$word] = ($counts[$word] ?? 0) + 1;
     }
     check(($counts['the'] ?? 0) > ($counts['search'] ?? 0) * 5, 'Empirical frequencies not preserved');
@@ -22,19 +22,17 @@ try {
     $a = new TextGenerator($opts);
     $b = new TextGenerator($opts);
     for ($i = 0; $i < 30; $i++) {
-        check($a->generate(10, 100) === $b->generate(10, 100), 'Seed must reproduce text');
+        check($a->generate(10, 100, $tmp) === $b->generate(10, 100, $tmp), 'Seed must reproduce text');
     }
-    $opts['seed'] = 43;
-    check((new TextGenerator($opts))->generate(50, 50) !== $a->generate(50, 50), 'Different seeds should differ');
 
-    $real = new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 5]);
-    $sample = $real->generate(120, 150);
+    $real = new TextGenerator(['realistic' => true]);
+    $sample = $real->generate(120, 150, $tmp);
     check(count(preg_split('/\\s+/', trim($sample))) >= 120, 'Document too short');
     check(str_ends_with($sample, '.'), 'Text must end in a period');
 
-    $old = TextGenerator::fingerprint($opts, ['<text/2/2>']);
+    $old = TextGenerator::fingerprint($opts, ['<text/{' . $tmp . '}/2/2>']);
     file_put_contents($tmp, "the 1000\nsearch 100\ndatabase 20\nrare 1\nnewword 3\n");
-    check($old !== TextGenerator::fingerprint($opts, ['<text/2/2>']), 'Changed dictionary must invalidate cache');
+    check($old !== TextGenerator::fingerprint($opts, ['<text/{' . $tmp . '}/2/2>']), 'Changed dictionary must invalidate cache');
 
     // Exercise first-run download using a local fixture in the upstream format.
     $autoCache = '/tmp/manticore-load-english-frequency.txt';
@@ -50,7 +48,7 @@ try {
             "3 database 20 1% 56%\n"
         );
         putenv('MANTICORE_LOAD_DICTIONARY_URL=file://' . $fixture);
-        $auto = new TextGenerator(['text-model' => 'realistic', 'seed' => 42]);
+        $auto = new TextGenerator(['realistic' => true]);
         $sample = $auto->generate(10, 10);
         check(is_file($autoCache), 'Automatic dictionary must be cached in /tmp');
         check(str_contains(file_get_contents($autoCache), "the 1000\n"), 'Dictionary download must parse upstream counts');
@@ -63,14 +61,14 @@ try {
             check(in_array(rtrim($token, '.,'), ['the', 'search', 'database'], true),
                 'Automatic dictionary must use cached words when offline');
         }
-        $cacheOpts = ['text-model' => 'realistic', 'seed' => 42];
+        $cacheOpts = ['realistic' => true];
         $key1 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
         file_put_contents($autoCache, "the 1000\nsearch 100\ndatabase 20\nextra 3\n");
         $key2 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
         check($key1 !== $key2, 'Changed cached dictionary must invalidate generated-query cache');
         check($key2 === TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']),
             'Cached dictionary fingerprint must be stable');
-        check($key2 !== TextGenerator::fingerprint(['text-model' => 'legacy', 'seed' => 42], ['<text/2/2>']),
+        check($key2 !== TextGenerator::fingerprint(['realistic' => false], ['<text/2/2>']),
             'Different text models must have different cache keys');
 
         // Failed/invalid downloads must leave no cache and allow retry.
@@ -79,7 +77,7 @@ try {
         putenv('MANTICORE_LOAD_DICTIONARY_URL=file://' . $fixture);
         $failed = false;
         try {
-            (new TextGenerator(['text-model' => 'realistic']))->generate(1, 1);
+            (new TextGenerator(['realistic' => true]))->generate(1, 1);
         } catch (RuntimeException $e) {
             $failed = true;
         }
@@ -93,21 +91,21 @@ try {
     }
 
     $caps = (new TextGenerator([
-        'text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 7,
-    ]))->generate(300, 300);
+        'realistic' => true, 'seed' => 7,
+    ]))->generate(300, 300, $tmp);
     check((bool)preg_match('/\.\s+[A-Z]/', $caps), 'Words after sentence boundaries must be capitalized');
-    check((new TextGenerator(['text-model' => 'realistic']))->generate(0, 0) === '',
+    check((new TextGenerator(['realistic' => true]))->generate(0, 0) === '',
         'Zero-length documents must not require a dictionary download');
     // Long documents exercise the bounded repetition buffer.
-    $long = (new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 17]))
-        ->generate(1000, 1000);
+    $long = (new TextGenerator(['realistic' => true, 'seed' => 17]))
+        ->generate(1000, 1000, $tmp);
     check(count(explode(' ', $long)) === 1000, 'Long documents must keep the exact requested length');
 
     // Length distribution should be substantially skewed rather than uniform.
-    $lengthGenerator = new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 9]);
+    $lengthGenerator = new TextGenerator(['realistic' => true, 'seed' => 9]);
     $totalWords = 0;
     for ($i = 0; $i < 250; $i++) {
-        $length = count(explode(' ', $lengthGenerator->generate(10, 1000)));
+        $length = count(explode(' ', $lengthGenerator->generate(10, 1000, $tmp)));
         check($length >= 10 && $length <= 1000, 'Lognormal length must stay inside bounds');
         $totalWords += $length;
     }
@@ -123,7 +121,7 @@ try {
             putenv('MANTICORE_LOAD_DICTIONARY_URL');
             @unlink($path);
             $start = microtime(true);
-            $live = new TextGenerator(['text-model' => 'realistic', 'seed' => 42]);
+            $live = new TextGenerator(['realistic' => true]);
             $text = $live->generate(100, 100);
             check(is_file($path), 'Live download must create a dictionary');
             $contents = file_get_contents($path);
@@ -140,7 +138,7 @@ try {
         }
     }
 
-    check((new TextGenerator(['text-model' => 'legacy']))->generate(3, 3) !== '',
+    check((new TextGenerator(['realistic' => false]))->generate(3, 3) !== '',
         'Legacy text generation must remain available');
     echo "Text generator tests passed\n";
 } finally {

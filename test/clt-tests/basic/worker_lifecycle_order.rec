@@ -72,7 +72,7 @@ mysql -h0 -P9306 -e "SELECT id,value FROM worker_lifecycle_order WHERE id=1; SEL
     }
 }
 ––– input –––
-mysql -h0 -P9306 -N -B -e "SELECT COUNT(*),MIN(value),MAX(value) FROM worker_lifecycle_parallel" | awk '{print $1, $2, $3}'
+mysql -h0 -P9306 -N -e "SELECT COUNT(*),MIN(value),MAX(value) FROM worker_lifecycle_parallel" | grep -oE '[0-9]+' | paste -sd' ' -
 ––– output –––
 4 10 10
 ––– input –––

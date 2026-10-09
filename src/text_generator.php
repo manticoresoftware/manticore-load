@@ -88,8 +88,7 @@ class TextWeightedSampler {
  * Uniform word selection is available through the default text model.
  */
 class TextGenerator {
-    private $config;
-    private $mode;
+    private $realistic;
     private $random;
     private $seed;
     private $vocabularies = [];
@@ -98,12 +97,8 @@ class TextGenerator {
         $get = function ($key, $default) use ($config) {
             return is_array($config) ? ($config[$key] ?? $default) : ($config->get($key) ?? $default);
         };
-        $this->mode = $get('text-model', 'legacy');
-        if (!in_array($this->mode, ['legacy', 'realistic'], true)) {
-            throw new InvalidArgumentException('--text-model must be legacy or realistic');
-        }
-        $this->config = ['text-dictionary' => $get('text-dictionary', null)];
-        $this->seed = (int)$get('seed', 42) + ((int)$get('process_index', 1) - 1) * 9973;
+        $this->realistic = (bool)$get('realistic', false);
+        $this->seed = 42 + ((int)$get('process_index', 1) - 1) * 9973;
         $this->reseedWorker(0);
     }
 
@@ -112,31 +107,19 @@ class TextGenerator {
     }
 
     public static function fingerprint($config, array $commands) {
-        $get = function ($key) use ($config) {
-            return is_array($config) ? ($config[$key] ?? null) : $config->get($key);
-        };
-        $options = ['version' => 3, 'model' => $get('text-model'), 'dictionary' => $get('text-dictionary'), 'seed' => $get('seed')];
+        $realistic = is_array($config) ? !empty($config['realistic']) : (bool)$config->get('realistic');
+        $options = ['version' => 4, 'realistic' => $realistic];
         $paths = [];
-        if ($options['dictionary'] && $options['dictionary'] !== 'auto') {
-            $paths[] = $options['dictionary'];
-        }
         $usesDefaultText = false;
         foreach ($commands as $command) {
-            if (preg_match('/<text\\/\\d+\\/\\d+>/', $command)) {
-                $usesDefaultText = true;
-            }
+            if (preg_match('/<text\\/\\d+\\/\\d+>/', $command)) $usesDefaultText = true;
             if (preg_match_all('/text\\/\\{([^}]+)\\}/', $command, $matches)) {
                 array_push($paths, ...$matches[1]);
             }
         }
-        if (($options['model'] ?? 'legacy') === 'realistic' && $usesDefaultText &&
-            ($options['dictionary'] === null || $options['dictionary'] === 'auto')) {
-            $paths[] = self::automaticDictionary();
-        }
+        if ($realistic && $usesDefaultText) $paths[] = self::automaticDictionary();
         foreach (array_unique($paths) as $path) {
-            if (!is_readable($path)) {
-                throw new RuntimeException("Cannot read text dictionary: $path");
-            }
+            if (!is_readable($path)) throw new RuntimeException("Cannot read text dictionary: $path");
             $options['files'][$path] = hash_file('sha256', $path);
         }
         return hash('sha256', json_encode($options));
@@ -206,11 +189,10 @@ class TextGenerator {
             throw new InvalidArgumentException('Invalid text word count bounds');
         }
         if ($maxWords === 0) return '';
-        $path = $file ?? $this->config['text-dictionary'];
-        if ($this->mode === 'legacy') {
-            return QueryGenerator::generateRandomText($minWords, $maxWords, $path);
+        if (!$this->realistic) {
+            return QueryGenerator::generateRandomText($minWords, $maxWords, $file);
         }
-        if ($path === null || $path === 'auto') $path = self::automaticDictionary();
+        $path = $file ?? self::automaticDictionary();
         $sampler = $this->sampler($path);
         $length = $this->documentLength($minWords, $maxWords);
         $words = [];

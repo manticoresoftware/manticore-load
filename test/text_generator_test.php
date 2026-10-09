@@ -22,7 +22,7 @@ try {
     $a = new TextGenerator($opts);
     $b = new TextGenerator($opts);
     for ($i = 0; $i < 30; $i++) {
-        check($a->generate(10, 100, $tmp) === $b->generate(10, 100, $tmp), 'Seed must reproduce text');
+        check($a->generate(10, 100, $tmp) === $b->generate(10, 100, $tmp), 'Fixed seed must reproduce text');
     }
 
     $real = new TextGenerator(['realistic' => true]);
@@ -91,18 +91,18 @@ try {
     }
 
     $caps = (new TextGenerator([
-        'realistic' => true, 'seed' => 7,
+        'realistic' => true,
     ]))->generate(300, 300, $tmp);
     check((bool)preg_match('/\.\s+[A-Z]/', $caps), 'Words after sentence boundaries must be capitalized');
     check((new TextGenerator(['realistic' => true]))->generate(0, 0) === '',
         'Zero-length documents must not require a dictionary download');
     // Long documents exercise the bounded repetition buffer.
-    $long = (new TextGenerator(['realistic' => true, 'seed' => 17]))
+    $long = (new TextGenerator(['realistic' => true]))
         ->generate(1000, 1000, $tmp);
     check(count(explode(' ', $long)) === 1000, 'Long documents must keep the exact requested length');
 
     // Length distribution should be substantially skewed rather than uniform.
-    $lengthGenerator = new TextGenerator(['realistic' => true, 'seed' => 9]);
+    $lengthGenerator = new TextGenerator(['realistic' => true]);
     $totalWords = 0;
     for ($i = 0; $i < 250; $i++) {
         $length = count(explode(' ', $lengthGenerator->generate(10, 1000, $tmp)));

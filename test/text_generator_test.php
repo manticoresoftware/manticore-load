@@ -62,6 +62,9 @@ try {
                 'Automatic dictionary must use cached words when offline');
         }
         $cacheOpts = ['realistic' => true];
+        $tierKey = TextGenerator::fingerprint($cacheOpts, ['<text/rare/1/1>']);
+        check($tierKey !== TextGenerator::fingerprint(['realistic' => false], ['<text/rare/1/1>']),
+            'Tiered query caches must be separate from ordinary text generation');
         $key1 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
         file_put_contents($autoCache, "the 1000\nsearch 100\ndatabase 20\nextra 3\n");
         $key2 = TextGenerator::fingerprint($cacheOpts, ['<text/2/2>']);
@@ -164,6 +167,10 @@ try {
             $lines = substr_count($contents, "\n");
             check($lines >= 200000, "Expected 200k+ words from upstream; got $lines");
             check(count(explode(' ', $text)) === 100, 'Live dictionary must produce 100 words');
+            foreach (['common', 'medium', 'rare'] as $tier) {
+                $term = $live->generate(1, 1, null, $tier);
+                check((bool)preg_match('/^[a-z0-9_-]+$/', $term), 'Live tier must produce one plain word: ' . $tier);
+            }
             echo sprintf("Live dictionary: %d words, %.2fs, peak RAM %.1f MiB\n",
                 $lines, microtime(true) - $start, memory_get_peak_usage(true) / 1048576);
         } finally {

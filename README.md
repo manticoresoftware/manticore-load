@@ -363,10 +363,10 @@ Contributions are welcome! Please open issues or submit pull requests on GitHub.
 
 By default, `<text/MIN/MAX>` generates text by selecting words uniformly
 from the built-in vocabulary. To generate text with more realistic word
-frequencies and document structure, use `--text-model=realistic`:
+frequencies and document structure, use `--realistic`:
 
 ```bash
-manticore-load --text-model=realistic --seed=42 \
+manticore-load --realistic \
   --total=100000 --batch-size=1000 \
   --init="CREATE TABLE t(body text)" \
   --load="INSERT INTO t(body) VALUES('<text/50/300>')"
@@ -382,9 +382,9 @@ again. No download checksum verification is performed.
 
 The mode uses empirical word-frequency weighting, repeated content words
 within documents, sentence punctuation, and lognormal document lengths.
-Custom dictionaries can be supplied with `--text-dictionary=/path/to/words.txt`
-or the existing `<text/{path}/MIN/MAX>` syntax. Use `word count` per line
-for frequency-based sampling or one word per line for uniform sampling.
-With `--seed`, output is reproducible for a fixed worker configuration.
+To provide a custom dictionary, use the existing `<text/{path}/MIN/MAX>`
+syntax. In realistic mode, `word count` lines use frequency-based sampling;
+one word per line uses uniform sampling. Generation uses a fixed seed of 42;
+output is reproducible for a fixed worker configuration.
 
 Run the standalone tests with `php test/text_generator_test.php`.

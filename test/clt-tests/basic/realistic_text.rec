@@ -1,0 +1,20 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+printf 'the 1000\nsearch 100\ndatabase 20\nindex 10\n' > /tmp/realistic-text-smoke-words.txt
+––– output –––
+––– input –––
+./manticore-load --drop --quiet --threads=1 --batch-size=2 --total=8 --text-model=realistic --text-dictionary=/tmp/realistic-text-smoke-words.txt --seed=42 --init="CREATE TABLE realistic_text_smoke(body text)" --load="INSERT INTO realistic_text_smoke(id,body) VALUES(<increment>,'<text/15/15>')" > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM realistic_text_smoke" | grep -oE '[0-9]+' | head -1
+––– output –––
+8

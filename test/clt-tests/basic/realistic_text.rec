@@ -18,3 +18,21 @@ printf 'the 1000\nsearch 100\ndatabase 20\nindex 10\n' > /tmp/realistic-text-smo
 mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM realistic_text_smoke" | grep -oE '[0-9]+' | head -1
 ––– output –––
 8
+––– input –––
+printf 'word000 1000\nword001 900\nword002 800\nword003 700\nword004 600\nword005 500\nword006 400\nword007 300\nword008 200\nword009 100\n' > /tmp/manticore-load-english-frequency.txt
+––– output –––
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/common/1/1>')" > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/medium/1/1>')" > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/rare/1/1>')" > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+rm -f /tmp/manticore-load-english-frequency.txt
+––– output –––

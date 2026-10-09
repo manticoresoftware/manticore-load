@@ -502,9 +502,9 @@ class Configuration implements ArrayAccess {
             "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
-            "  --text-model=VALUE    Text generator setting (default: legacy)\n" .
-            "  --text-dictionary=VALUE    Text generator setting (default: null)\n" .
-            "  --seed=VALUE    Text generator setting (default: 42)\n" .
+            "  --text-model=VALUE    Text generation: legacy or realistic (default: legacy)\n" .
+            "  --text-dictionary=VALUE    Word-frequency dictionary for realistic text (default: auto)\n" .
+            "  --seed=VALUE          Random seed for reproducible generation (default: 42)\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --wait                       After load, wait while table optimization is in progress\n" .
             "  --together                   Run multiple processes with different configurations.\n" .

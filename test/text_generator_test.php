@@ -98,6 +98,21 @@ try {
     check((bool)preg_match('/\.\s+[A-Z]/', $caps), 'Words after sentence boundaries must be capitalized');
     check((new TextGenerator(['text-model' => 'realistic']))->generate(0, 0) === '',
         'Zero-length documents must not require a dictionary download');
+    // Long documents exercise the bounded repetition buffer.
+    $long = (new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 17]))
+        ->generate(1000, 1000);
+    check(count(explode(' ', $long)) === 1000, 'Long documents must keep the exact requested length');
+
+    // Length distribution should be substantially skewed rather than uniform.
+    $lengthGenerator = new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => $tmp, 'seed' => 9]);
+    $totalWords = 0;
+    for ($i = 0; $i < 250; $i++) {
+        $length = count(explode(' ', $lengthGenerator->generate(10, 1000)));
+        check($length >= 10 && $length <= 1000, 'Lognormal length must stay inside bounds');
+        $totalWords += $length;
+    }
+    check($totalWords / 250 < 400, 'Lognormal lengths must favor shorter documents');
+
     // Optional live smoke test, for checking the pinned upstream dictionary.
     // Intentionally not part of the default offline test suite.
     if (getenv('MANTICORE_LOAD_LIVE_DICTIONARY_TEST') === '1') {

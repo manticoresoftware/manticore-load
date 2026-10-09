@@ -7,6 +7,22 @@ on:
       branches: [ main ]
 
 jobs:
+    text-generator:
+        name: Text generator unit tests
+        runs-on: ubuntu-22.04
+        steps:
+          - uses: actions/checkout@v4
+          - name: PHP syntax and statistical tests
+            run: |
+              php -l src/text_generator.php
+              php -l src/query_generator.php
+              php -l src/manticore_http_query_generator.php
+              php -l src/configuration.php
+              php -l manticore-load
+              php test/text_generator_test.php
+          - name: Live English dictionary download and sampling
+            run: MANTICORE_LOAD_LIVE_DICTIONARY_TEST=1 php test/text_generator_test.php
+
    
     clt-help:
         name: CLT misc tests

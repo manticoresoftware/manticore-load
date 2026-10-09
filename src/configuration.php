@@ -36,6 +36,7 @@ class Configuration implements ArrayAccess {
         'iterations:',
         'cache-gen-workers:',
         'cache-from-disk',
+        'realistic',
         'verbose',
         'quiet',
         'json',
@@ -66,6 +67,7 @@ class Configuration implements ArrayAccess {
         'latency-histograms' => true,
         'cache-gen-workers' => 1,
         'cache-from-disk' => false,
+        'realistic' => false,
         'delay' => 0,
         'http' => false,
         'table' => null,
@@ -110,7 +112,8 @@ class Configuration implements ArrayAccess {
         $per_process_params = [
             'drop', 'batch-size', 'threads', 'total', 
             'iterations', 'init', 'worker-init', 'worker-finalize', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
-            'cache-from-disk'
+            'cache-from-disk',
+            'realistic'
         ];
         $index = 1;
         
@@ -497,6 +500,8 @@ class Configuration implements ArrayAccess {
             "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
+            "  --realistic                  Use English word frequencies for <text> generation\n" .
+            "                               Also models word repetition and document lengths\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --wait                       After load, wait while table optimization is in progress\n" .
             "  --together                   Run multiple processes with different configurations.\n" .
@@ -516,6 +521,9 @@ class Configuration implements ArrayAccess {
             "  <increment/1000>             Auto-incrementing value starting from 1000\n" .
             "  <string/3/10>                Random string, length between 3 and 10\n" .
             "  <text/20/100>                Random text with 20 to 100 words\n" .
+            "  <text/common/1/2>            Frequent search terms (--realistic only)\n" .
+            "  <text/medium/1/2>            Medium-frequency search terms (--realistic only)\n" .
+            "  <text/rare/1/2>              Rare search terms (--realistic only)\n" .
             "  <text/{/path/to/file}/10/100> Random text using words from file, 10 to 100 words\n" .
             "  <int/1/100>                  Random integer between 1 and 100\n" .
             "  <float/1/1000>               Random float between 1 and 1000\n" .
@@ -546,6 +554,16 @@ class Configuration implements ArrayAccess {
             "--total=10000 \\\n" .
             "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n" .
            
+            "# --realistic: create a table and insert 100,000 documents:\n" .
+            "manticore-load --realistic \\\n" .
+            "--drop --threads=4 --batch-size=1000 --total=100000 \\\n" .
+            "--init=\"CREATE TABLE realistic_docs(body text)\" \\\n" .
+            "--load=\"INSERT INTO realistic_docs(id,body) VALUES(<increment>,'<text/50/300>')\"\n\n" .
+            "# --realistic: search with rare terms:\n" .
+            "manticore-load --realistic \\\n" .
+            "--threads=4 --total=1000 \\\n" .
+            "--load=\"SELECT * FROM realistic_docs WHERE MATCH('<text/rare/1/1>') LIMIT 20\"\n\n" .
+            
             "# First process inserts data, second process runs queries simultaneously\n" .
             "manticore-load \\\n" .
             "--host=127.0.0.1 \\\n" .

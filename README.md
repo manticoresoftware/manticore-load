@@ -358,3 +358,52 @@ This project is licensed under the MIT License. See the [LICENSE](./LICENSE) fil
 ## Contributing
 
 Contributions are welcome! Please open issues or submit pull requests on GitHub.
+
+### More realistic synthetic text
+
+By default, `<text/MIN/MAX>` generates text by selecting words uniformly
+from the built-in vocabulary. To generate text with more realistic word
+frequencies and document structure, use `--realistic`:
+
+```bash
+manticore-load --realistic \
+  --total=100000 --batch-size=1000 \
+  --init="CREATE TABLE t(body text)" \
+  --load="INSERT INTO t(body) VALUES('<text/50/300>')"
+```
+
+Realistic mode downloads a dictionary of approximately 246,000 English
+words with frequencies from [gwordlist](https://github.com/hackerb9/gwordlist)
+(Google Books Ngrams) on first use. The source data is provided under
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The downloaded data
+is converted and cached in `/tmp/manticore-load-english-frequency.txt`.
+Later runs reuse this cache, including offline. Delete the file to download
+again. No download checksum verification is performed.
+
+The mode uses empirical word-frequency weighting, repeated content words
+within documents, sentence punctuation, and lognormal document lengths.
+To provide a custom dictionary, use the existing `<text/{path}/MIN/MAX>`
+syntax. In realistic mode, `word count` lines use frequency-based sampling;
+one word per line uses uniform sampling. Generation uses a fixed seed of 42;
+output is reproducible for a fixed worker configuration.
+
+### Query terms by frequency
+
+With `--realistic`, you can select query words from frequency-ranked groups:
+
+- `<text/common/1/1>`: top 1% of words;
+- `<text/medium/1/1>`: next 19%;
+- `<text/rare/1/1>`: remaining 80%.
+
+The `MIN/MAX` values control the number of query terms. Terms are emitted
+without punctuation or capitalization. Within each group, sampling follows
+the dictionary's empirical word frequencies. These groups are based on
+dictionary ranks, **not** measured document frequency (DF); rare words
+may be absent from the generated documents.
+
+```bash
+manticore-load --realistic --threads=4 --total=1000 \
+  --load="SELECT * FROM t WHERE MATCH('<text/rare/1/1>') LIMIT 20"
+```
+
+Run the standalone tests with `php test/text_generator_test.php`.

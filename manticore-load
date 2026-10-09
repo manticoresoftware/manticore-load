@@ -65,6 +65,7 @@ function findRequiredFile($filename) {
 // Load required files
 $required_files = [
     'configuration.php',
+    'text_generator.php',
     'query_generator.php',
     'statistics.php',
     'progress_display.php',

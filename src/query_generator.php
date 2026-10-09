@@ -152,9 +152,11 @@ class QueryGenerator {
     private $is_tty = true;
     private static $words = null;
     private static $words_count = null;
+    private static $current_words_path = null;
     private $process_index;
     private $stop_shm_id;
     private $cache_from_disk = false;
+    private $text_generator;
     private static $supported_pattern_types = [
         'increment',
         'string',
@@ -173,7 +175,8 @@ class QueryGenerator {
      */
     public function __construct(Configuration $config, $main_script_path) {
         // Set fixed seed for random number generation
-        srand(42); // Using constant value 42 as seed
+        srand(42);
+        $this->text_generator = new TextGenerator($config);
         
         $this->config = $config;
         $this->process_index = $config->get('process_index');
@@ -226,15 +229,8 @@ class QueryGenerator {
      * @param string|null $filePath Optional path to file to source words from (if null, uses internal word list)
      * @return string Generated text
      */
-    public static function generateRandomText($minWords, $maxWords, $filePath = null) {
-        static $punctuation = array('.', '!', '?', ',', ';');
-        
-        // Initialize word list only once
-        if (self::$words === null) {
-            if ($filePath !== null) {
-                self::loadWordsFromFile($filePath);
-            } else {
-                self::$words = array(
+    public static function builtinVocabulary() {
+        return array(
                     'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
                     'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
                     'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
@@ -276,7 +272,20 @@ class QueryGenerator {
                     'fortunately', 'unfortunately', 'happily', 'unhappily', 'luckily', 'unluckily', 'surprisingly', 'expectedly', 'obviously', 'subtly',
                     'definitely', 'possibly', 'probably', 'certainly', 'maybe', 'perhaps', 'surely', 'doubtfully', 'clearly', 'vaguely',
                     '1', '2', '3', '4', '5', '10', '20', '50', '100', '1000'
-                );
+        );
+    }
+
+    public static function generateRandomText($minWords, $maxWords, $filePath = null) {
+        static $punctuation = array('.', '!', '?', ',', ';');
+        
+        // Initialize word list only once
+        if (self::$words === null || self::$current_words_path !== $filePath) {
+            self::$current_words_path = $filePath;
+            self::$words_count = null;
+            if ($filePath !== null) {
+                self::loadWordsFromFile($filePath);
+            } else {
+                self::$words = self::builtinVocabulary();
             }
         }
         
@@ -365,8 +374,19 @@ class QueryGenerator {
                 ];
                 
             case 'text':
+                if (count($parts) === 4 && in_array($parts[1], ['common', 'medium', 'rare'], true)) {
+                    if (!preg_match('/^[0-9]+$/D', $parts[2]) || !preg_match('/^[0-9]+$/D', $parts[3]) || (int)$parts[2] > (int)$parts[3]) {
+                        throw new Exception("Text frequency pattern requires format: text/common|medium|rare/min_words/max_words");
+                    }
+                    return [
+                        'type' => 'text',
+                        'frequency_tier' => $parts[1],
+                        'min_words' => (int)$parts[2],
+                        'max_words' => (int)$parts[3]
+                    ];
+                }
                 if (count($parts) !== 3) {
-                    throw new Exception("Text pattern requires format: text/min_words/max_words or text/{path/to/file}/min_words/max_words");
+                    throw new Exception("Text pattern requires format: text/min_words/max_words, text/common|medium|rare/min_words/max_words, or text/{path/to/file}/min_words/max_words");
                 }
                 return [
                     'type' => 'text',
@@ -460,10 +480,11 @@ class QueryGenerator {
                 );
                 
             case 'text':
-                return self::generateRandomText(
+                return $this->text_generator->generate(
                     $pattern['min_words'] ?? 20,
                     $pattern['max_words'] ?? 300,
-                    $pattern['file_path'] ?? null
+                    $pattern['file_path'] ?? null,
+                    $pattern['frequency_tier'] ?? null
                 );
                 
             case 'int':
@@ -512,7 +533,8 @@ class QueryGenerator {
             $this->config->get('total'),
             $this->config->get('batch-size'),
             $this->config->get('cache-gen-workers'),
-            $this->config->get('process_index')
+            $this->config->get('process_index'),
+            TextGenerator::fingerprint($this->config, $this->load_commands)
         ]);
         
         return '/tmp/manticore_load_' . md5($cache_key);
@@ -862,6 +884,7 @@ class QueryGenerator {
 
     private function runCacheWorker($load_index, $start_row, $rows, $cache_file_name, $worker_index, $progress_file) {
         srand(42 + $worker_index);
+        $this->text_generator->reseedWorker($worker_index);
         if (function_exists('mt_srand')) {
             mt_srand(42 + $worker_index);
         }

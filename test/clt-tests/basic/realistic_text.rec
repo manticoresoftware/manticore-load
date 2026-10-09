@@ -1,0 +1,41 @@
+––– input –––
+searchd > /dev/null
+––– output –––
+––– input –––
+sleep 3
+––– output –––
+––– input –––
+cd /manticore-load
+––– output –––
+––– input –––
+printf 'the 1000\nsearch 100\ndatabase 20\nindex 10\n' > /tmp/realistic-text-smoke-words.txt
+––– output –––
+––– input –––
+./manticore-load --drop --quiet --threads=1 --batch-size=2 --total=8 --realistic --init="CREATE TABLE realistic_text_smoke(body text)" --load="INSERT INTO realistic_text_smoke(id,body) VALUES(<increment>,'<text/{/tmp/realistic-text-smoke-words.txt}/15/15>')" > /dev/null; echo $?
+––– output –––
+0
+––– input –––
+mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM realistic_text_smoke" | grep -oE '[0-9]+' | head -1
+––– output –––
+8
+––– input –––
+printf 'word000 1000\nword001 900\nword002 800\nword003 700\nword004 600\nword005 500\nword006 400\nword007 300\nword008 200\nword009 100\n' > /tmp/manticore-load-english-frequency.txt
+––– output –––
+––– input –––
+mysql -h0 -P9306 -e "INSERT INTO realistic_text_smoke(id,body) VALUES (100, 'word000 word001 word002 word003 word004 word005 word006 word007 word008 word009')"
+––– output –––
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/common/1/1>')" > /tmp/tier-common.log 2>&1; result=$?; if [ "$result" -ne 0 ]; then cat /tmp/tier-common.log; fi; echo "$result"
+––– output –––
+0
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/medium/1/1>')" > /tmp/tier-medium.log 2>&1; result=$?; if [ "$result" -ne 0 ]; then cat /tmp/tier-medium.log; fi; echo "$result"
+––– output –––
+0
+––– input –––
+./manticore-load --quiet --realistic --threads=1 --total=3 --load="SELECT * FROM realistic_text_smoke WHERE MATCH('<text/rare/1/1>')" > /tmp/tier-rare.log 2>&1; result=$?; if [ "$result" -ne 0 ]; then cat /tmp/tier-rare.log; fi; echo "$result"
+––– output –––
+0
+––– input –––
+rm -f /tmp/manticore-load-english-frequency.txt
+––– output –––

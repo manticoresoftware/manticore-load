@@ -150,7 +150,9 @@ class TextGenerator {
         try {
             clearstatcache(true, $path);
             if (is_readable($path) && filesize($path) > 0) return $path;
-            $url = 'https://raw.githubusercontent.com/hackerb9/gwordlist/5e9902468ab09802474884c3df00d77463e5cb24/frequency-alpha-alldicts.txt';
+            // Override the source in offline tests or private environments.
+            $url = getenv('MANTICORE_LOAD_DICTIONARY_URL') ?:
+                'https://raw.githubusercontent.com/hackerb9/gwordlist/5e9902468ab09802474884c3df00d77463e5cb24/frequency-alpha-alldicts.txt';
             $source = @fopen($url, 'rb');
             if (!$source) throw new RuntimeException('Cannot download English frequency dictionary');
             $tmp = tempnam('/tmp', 'manticore-dict-');

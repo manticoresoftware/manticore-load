@@ -500,7 +500,8 @@ class Configuration implements ArrayAccess {
             "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
-            "  --realistic                  Generate realistic text using a downloaded English frequency dictionary\n" .
+            "  --realistic                  Use English word frequencies for <text> generation\n" .
+            "                               Also models word repetition and document lengths\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --wait                       After load, wait while table optimization is in progress\n" .
             "  --together                   Run multiple processes with different configurations.\n" .

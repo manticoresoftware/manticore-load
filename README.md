@@ -361,6 +361,28 @@ Contributions are welcome! Please open issues or submit pull requests on GitHub.
 
 ### More realistic synthetic text
 
+### Automatic English frequency dictionary
+
+Use `--text-dictionary=auto` with `--text-model=zipf` or
+`--text-model=realistic` to download a large English frequency-ranked vocabulary
+on the first run. The source is the dictionary-verified Google Books list from
+[hackerb9/gwordlist](https://github.com/hackerb9/gwordlist)
+(about 246,000 entries). The converted dictionary is cached at
+`/tmp/manticore-load-english-frequency.txt` and reused on subsequent runs.
+
+```bash
+manticore-load --text-model=realistic --text-dictionary=auto \
+  --text-weighting=empirical --seed=42 \
+  --total=100000 --batch-size=1000 \
+  --init="CREATE TABLE t(body text)" \
+  --load="INSERT INTO t(body) VALUES('<text/50/300>')"
+```
+
+No checksum verification is performed. Removing the cached file causes a new
+download. Offline runs work once the cache exists; the first run requires
+network access. The original built-in vocabulary remains the default.
+
+
 By default `<text/MIN/MAX>` preserves its historical, uniform word selection.
 Opt in to the Zipf–Mandelbrot model or a more realistic document model:
 

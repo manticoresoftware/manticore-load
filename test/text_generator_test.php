@@ -43,8 +43,11 @@ try {
         $auto = new TextGenerator(['text-model' => 'realistic', 'text-dictionary' => 'auto', 'seed' => 42]);
         $sample = $auto->generate(10, 10);
         check(count(explode(' ', $sample)) === 10, 'Auto cached vocabulary must generate ten words');
-        check((bool)preg_match('/^(The|Search|Database|the|search|database)[a-z ,.]*\\.$/', $sample),
-            'Auto dictionary should provide frequency words');
+        $tokens = preg_split('/\\s+/', strtolower(trim($sample)));
+        foreach ($tokens as $token) {
+            check(in_array(rtrim($token, '.,'), ['the', 'search', 'database'], true),
+                'Auto dictionary should use words from cached source');
+        }
         check(TextGenerator::fingerprint(['text-dictionary' => 'auto'], ['<text/2/2>']) !== '',
             'Automatic dictionary should work without downloading during fingerprint');
     } finally {

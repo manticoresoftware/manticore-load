@@ -36,7 +36,7 @@ class Configuration implements ArrayAccess {
         'iterations:',
         'cache-gen-workers:',
         'cache-from-disk',
-        'text-model:', 'text-dictionary:', 'seed:',
+        'realistic',
         'verbose',
         'quiet',
         'json',
@@ -67,9 +67,7 @@ class Configuration implements ArrayAccess {
         'latency-histograms' => true,
         'cache-gen-workers' => 1,
         'cache-from-disk' => false,
-        'text-model' => 'legacy',
-        'text-dictionary' => null,
-        'seed' => 42,
+        'realistic' => false,
         'delay' => 0,
         'http' => false,
         'table' => null,
@@ -115,7 +113,7 @@ class Configuration implements ArrayAccess {
             'drop', 'batch-size', 'threads', 'total', 
             'iterations', 'init', 'worker-init', 'worker-finalize', 'load', 'load-distribution', 'column', 'delay', 'cache-gen-workers',
             'cache-from-disk',
-            'text-model', 'text-dictionary', 'seed'
+            'realistic'
         ];
         $index = 1;
         
@@ -502,9 +500,7 @@ class Configuration implements ArrayAccess {
             "  --cache-gen-workers=N        Number of worker processes for cache generation\n" .
             "                               (default: 1)\n" .
             "  --cache-from-disk            Stream cache from disk instead of loading into memory\n" .
-            "  --text-model=VALUE           Text generation: legacy or realistic (default: legacy)\n" .
-            "  --text-dictionary=VALUE      Word-frequency dictionary for realistic text (default: auto)\n" .
-            "  --seed=VALUE                 Random seed for reproducible generation (default: 42)\n" .
+            "  --realistic                  Generate realistic text using a downloaded English frequency dictionary\n" .
             "  --delay=N                    Add artificial delay between queries in seconds (default: 0)\n" .
             "  --wait                       After load, wait while table optimization is in progress\n" .
             "  --together                   Run multiple processes with different configurations.\n" .

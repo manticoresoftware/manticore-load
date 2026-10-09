@@ -372,16 +372,19 @@ manticore-load --text-model=realistic --seed=42 \
   --load="INSERT INTO t(body) VALUES('<text/50/300>')"
 ```
 
-Realistic mode uses a frequency-ranked English vocabulary downloaded on first
-use and cached in `/tmp/manticore-load-english-frequency.txt`. Later runs
-reuse the cache. No downloaded-file checksum is checked. Delete the file to
-download again. The initial download requires internet access.
+Realistic mode downloads a dictionary of approximately 246,000 English
+words with frequencies from [gwordlist](https://github.com/hackerb9/gwordlist)
+(Google Books Ngrams) on first use. The source data is provided under
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The downloaded data
+is converted and cached in `/tmp/manticore-load-english-frequency.txt`.
+Later runs reuse this cache, including offline. Delete the file to download
+again. No download checksum verification is performed.
 
-The mode uses word-frequency weighting, repeated content words within a
-document, sentence punctuation and varying document lengths. You can also
-provide a custom dictionary with `--text-dictionary=/path/to/words.txt` or
-the existing `<text/{path}/MIN/MAX>` syntax. One word per line or
-`word count` per line is supported. `--seed` makes single-worker generation
-reproducible; changing worker counts can change the output.
+The mode uses empirical word-frequency weighting, repeated content words
+within documents, sentence punctuation, and lognormal document lengths.
+Custom dictionaries can be supplied with `--text-dictionary=/path/to/words.txt`
+or the existing `<text/{path}/MIN/MAX>` syntax. Use `word count` per line
+for frequency-based sampling or one word per line for uniform sampling.
+With `--seed`, output is reproducible for a fixed worker configuration.
 
 Run the standalone tests with `php test/text_generator_test.php`.

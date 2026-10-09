@@ -30,7 +30,7 @@ class TextRandom {
 
 /**
  * Vose alias sampler. Preprocessing is O(V); each draw is O(1).
- * Works with empirical counts and with rank-based Zipf weights.
+ * Samples words using their observed frequencies.
  */
 class TextWeightedSampler {
     private $words;
@@ -85,7 +85,7 @@ class TextWeightedSampler {
 
 /**
  * Opt-in realistic text: empirical frequencies, repetition and document lengths.
- * Legacy <text> behavior is preserved by QueryGenerator.
+ * Uniform word selection is available through the default text model.
  */
 class TextGenerator {
     private $config;
@@ -115,15 +115,23 @@ class TextGenerator {
         $get = function ($key) use ($config) {
             return is_array($config) ? ($config[$key] ?? null) : $config->get($key);
         };
-        $options = ['version' => 2, 'model' => $get('text-model'), 'dictionary' => $get('text-dictionary'), 'seed' => $get('seed')];
+        $options = ['version' => 3, 'model' => $get('text-model'), 'dictionary' => $get('text-dictionary'), 'seed' => $get('seed')];
         $paths = [];
         if ($options['dictionary'] && $options['dictionary'] !== 'auto') {
             $paths[] = $options['dictionary'];
         }
+        $usesDefaultText = false;
         foreach ($commands as $command) {
+            if (preg_match('/<text\\/\\d+\\/\\d+>/', $command)) {
+                $usesDefaultText = true;
+            }
             if (preg_match_all('/text\\/\\{([^}]+)\\}/', $command, $matches)) {
                 array_push($paths, ...$matches[1]);
             }
+        }
+        if (($options['model'] ?? 'legacy') === 'realistic' && $usesDefaultText &&
+            ($options['dictionary'] === null || $options['dictionary'] === 'auto')) {
+            $paths[] = self::automaticDictionary();
         }
         foreach (array_unique($paths) as $path) {
             if (!is_readable($path)) {
@@ -142,7 +150,7 @@ class TextGenerator {
         try {
             clearstatcache(true, $path);
             if (is_readable($path) && filesize($path) > 0) return $path;
-            $url = 'https://raw.githubusercontent.com/hackerb9/gwordlist/master/frequency-alpha-alldicts.txt';
+            $url = 'https://raw.githubusercontent.com/hackerb9/gwordlist/5e9902468ab09802474884c3df00d77463e5cb24/frequency-alpha-alldicts.txt';
             $source = @fopen($url, 'rb');
             if (!$source) throw new RuntimeException('Cannot download English frequency dictionary');
             $tmp = tempnam('/tmp', 'manticore-dict-');
@@ -150,14 +158,21 @@ class TextGenerator {
                 fclose($source);
                 throw new RuntimeException('Cannot create temporary dictionary');
             }
-            $out = fopen($tmp, 'wb');
+            $out = @fopen($tmp, 'wb');
+            if (!$out) {
+                fclose($source);
+                @unlink($tmp);
+                throw new RuntimeException('Cannot write temporary dictionary');
+            }
             $count = 0;
             try {
                 while (($line = fgets($source)) !== false) {
                     if (preg_match('/^\\s*#?(\\d+)\\s+([a-zA-Z]+)\\s+([\\d,]+)/', $line, $m)) {
                         $weight = str_replace(',', '', $m[3]);
                         if ((float)$weight > 0) {
-                            fwrite($out, strtolower($m[2]) . ' ' . $weight . "\n");
+                            if (fwrite($out, strtolower($m[2]) . ' ' . $weight . "\n") === false) {
+                                throw new RuntimeException('Cannot write dictionary cache');
+                            }
                             $count++;
                         }
                     }
@@ -177,12 +192,13 @@ class TextGenerator {
         }
     }
 
-    public function generate($minWords, $maxWords, $file = null, $queryTier = null) {
+    public function generate($minWords, $maxWords, $file = null) {
         $minWords = (int)$minWords;
         $maxWords = (int)$maxWords;
         if ($minWords < 0 || $maxWords < $minWords) {
             throw new InvalidArgumentException('Invalid text word count bounds');
         }
+        if ($maxWords === 0) return '';
         $path = $file ?? $this->config['text-dictionary'];
         if ($this->mode === 'legacy') {
             return QueryGenerator::generateRandomText($minWords, $maxWords, $path);
@@ -193,6 +209,7 @@ class TextGenerator {
         $words = [];
         $reusable = [];
         $sentence = $this->random->between(8, 20);
+        $capitalize = true;
         for ($i = 0; $i < $length; $i++) {
             // Repeat content words in the same document to reproduce burstiness.
             if ($reusable && $this->random->nextFloat() < 0.12) {
@@ -204,10 +221,12 @@ class TextGenerator {
                 $reusable[] = $word;
                 if (count($reusable) > 200) array_shift($reusable);
             }
-            if ($i === 0 || $sentence === 0) $word = ucfirst($word);
+            if ($capitalize) $word = ucfirst($word);
+            $capitalize = false;
             $sentence--;
             if ($sentence <= 0 || $i === $length - 1) {
                 $word .= '.';
+                $capitalize = true;
                 $sentence = $this->random->between(8, 20);
             } elseif ($sentence > 3 && $this->random->nextFloat() < 0.05) {
                 $word .= ',';

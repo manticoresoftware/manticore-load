@@ -361,30 +361,8 @@ Contributions are welcome! Please open issues or submit pull requests on GitHub.
 
 ### More realistic synthetic text
 
-### Automatic English frequency dictionary
-
-Use `--text-dictionary=auto` with `--text-model=zipf` or
-`--text-model=realistic` to download a large English frequency-ranked vocabulary
-on the first run. The source is the dictionary-verified Google Books list from
-[hackerb9/gwordlist](https://github.com/hackerb9/gwordlist)
-(about 246,000 entries). The converted dictionary is cached at
-`/tmp/manticore-load-english-frequency.txt` and reused on subsequent runs.
-
-```bash
-manticore-load --text-model=realistic --text-dictionary=auto \
-  --text-weighting=empirical --seed=42 \
-  --total=100000 --batch-size=1000 \
-  --init="CREATE TABLE t(body text)" \
-  --load="INSERT INTO t(body) VALUES('<text/50/300>')"
-```
-
-No checksum verification is performed. Removing the cached file causes a new
-download. Offline runs work once the cache exists; the first run requires
-network access. The original built-in vocabulary remains the default.
-
-
-By default `<text/MIN/MAX>` preserves its historical, uniform word selection.
-Opt in to the Zipf–Mandelbrot model or a more realistic document model:
+The default `<text/MIN/MAX>` behavior is unchanged. To generate realistic
+random text, opt in with `--text-model=realistic`:
 
 ```bash
 manticore-load --text-model=realistic --seed=42 \
@@ -393,35 +371,16 @@ manticore-load --text-model=realistic --seed=42 \
   --load="INSERT INTO t(body) VALUES('<text/50/300>')"
 ```
 
-For better vocabulary coverage, supply a custom dictionary. Accepted formats:
-- one word per line, ranked from most to least frequent (Zipf weights);
-- `word count` per line (empirical weights unless `--text-weighting=zipf`);
-- unstructured text, from which empirical word counts are computed.
+Realistic mode uses a frequency-ranked English vocabulary downloaded on first
+use and cached in `/tmp/manticore-load-english-frequency.txt`. Later runs
+reuse the cache. No downloaded-file checksum is checked. Delete the file to
+download again. The initial download requires internet access.
 
-`--text-model=zipf` samples tokens independently using Zipf–Mandelbrot weights
-(default exponent 1, shift 2.7); `realistic` adds topical grouping, repeated
-content words, sentence structure, a truncated lognormal distribution of
-document lengths, and synthesized rare tokens. Heaps-like vocabulary growth is
-approximate and should be calibrated against the target corpus rather than
-interpreted as an exact Heaps-law guarantee. Topic assignment is heuristic by
-default; use `--text-topics-file` with lines `technology database`, etc.
-for explicit topic membership.
+The mode uses word-frequency weighting, repeated content words within a
+document, sentence punctuation and varying document lengths. You can also
+provide a custom dictionary with `--text-dictionary=/path/to/words.txt` or
+the existing `<text/{path}/MIN/MAX>` syntax. One word per line or
+`word count` per line is supported. `--seed` makes single-worker generation
+reproducible; changing worker counts can change the output.
 
-Options include `--text-weighting=auto|zipf|empirical`,
-`--zipf-exponent`, `--zipf-shift`, `--text-burstiness` (0..1),
-`--text-topic-strength` (0..1), `--text-length=auto|uniform|lognormal`,
-`--text-heaps-beta`, `--text-heaps-scale`, `--seed`.
-Large dictionaries take memory proportional to vocabulary size and alias tables.
-Synthetic rare words are designed for posting-list statistics, not
-linguistic semantics.
-
-For search queries, `<text_query/common/1/2>`,
-`<text_query/medium/1/2>`, and `<text_query/rare/1/2>` sample frequency
-tiers without punctuation. These are lexical rank tiers, not guaranteed DF
-ranges. For accurate selectivity, measure actual DF after indexing.
-
-The generator respects the seed and uses distinct seeds for cache workers.
-Changing worker count can change the data. Cache keys incorporate the model
-configuration and dictionary contents.
-
-Run the standalone statistical checks with `php test/text_generator_test.php`.
+Run the standalone tests with `php test/text_generator_test.php`.

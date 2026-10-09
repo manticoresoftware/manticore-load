@@ -161,7 +161,6 @@ class QueryGenerator {
         'increment',
         'string',
         'text',
-        'text_query',
         'int',
         'float',
         'boolean',
@@ -374,12 +373,6 @@ class QueryGenerator {
                     'max_length' => (int)$parts[2]
                 ];
                 
-            case 'text_query':
-                if (count($parts) !== 4 || !in_array($parts[1], ['common', 'medium', 'rare', 'any'], true)) {
-                    throw new Exception('Text query format: text_query/common|medium|rare|any/min_words/max_words');
-                }
-                return ['type' => 'text_query', 'tier' => $parts[1], 'min_words' => (int)$parts[2], 'max_words' => (int)$parts[3]];
-
             case 'text':
                 if (count($parts) !== 3) {
                     throw new Exception("Text pattern requires format: text/min_words/max_words or text/{path/to/file}/min_words/max_words");
@@ -481,9 +474,6 @@ class QueryGenerator {
                     $pattern['max_words'] ?? 300,
                     $pattern['file_path'] ?? null
                 );
-                
-            case 'text_query':
-                return $this->text_generator->generate($pattern['min_words'], $pattern['max_words'], $pattern['file_path'] ?? null, $pattern['tier']);
                 
             case 'int':
                 return rand($pattern['min'] ?? 0, $pattern['max'] ?? PHP_INT_MAX);

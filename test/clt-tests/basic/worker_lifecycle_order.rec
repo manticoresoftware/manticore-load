@@ -72,11 +72,9 @@ mysql -h0 -P9306 -e "SELECT id,value FROM worker_lifecycle_order WHERE id=1; SEL
     }
 }
 ––– input –––
-mysql -h0 -P9306 -N -e "SELECT COUNT(*),MIN(value),MAX(value) FROM worker_lifecycle_parallel"
+mysql -h0 -P9306 -N -B -e "SELECT COUNT(*),MIN(value),MAX(value) FROM worker_lifecycle_parallel" | awk '{print $1, $2, $3}'
 ––– output –––
-+------+------+------+
-| #!/\s*4\s*/!# |   10 |   10 |
-+------+------+------+
+4 10 10
 ––– input –––
 ./manticore-load --drop --threads=4 --batch-size=2 --total=8 --init="CREATE TABLE worker_lifecycle_failure(value int)" --worker-init="BEGIN" --worker-finalize="INVALID FINALIZER" --load="INSERT INTO worker_lifecycle_failure(id,value) VALUES(<increment>,10)" > /dev/null; echo $?; mysql -h0 -P9306 -N -e "SELECT COUNT(*) FROM worker_lifecycle_failure" | grep -oE '[0-9]+'
 ––– output –––

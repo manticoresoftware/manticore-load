@@ -171,7 +171,7 @@ class TextGenerator {
         }
         $paths = [];
         foreach ([$options['text-dictionary'], $options['text-topics-file']] as $path) {
-            if ($path) {
+            if ($path && $path !== 'auto') {
                 $paths[] = $path;
             }
         }
@@ -189,6 +189,33 @@ class TextGenerator {
         return hash('sha256', json_encode($options));
     }
 
+    private static function automaticDictionary() {
+        $path = '/tmp/manticore-load-english-frequency.txt';
+        if (is_readable($path) && filesize($path) > 0) return $path;
+        $lock = fopen($path . '.lock', 'c');
+        if (!$lock || !flock($lock, LOCK_EX)) throw new RuntimeException('Cannot lock dictionary cache');
+        try {
+            if (is_readable($path) && filesize($path) > 0) return $path;
+            $source = 'https://raw.githubusercontent.com/hackerb9/gwordlist/master/frequency-alpha-alldicts.txt';
+            $data = @file_get_contents($source);
+            if ($data === false) throw new RuntimeException('Cannot download English frequency dictionary');
+            $rows = [];
+            foreach (explode("\n", $data) as $line) {
+                if (preg_match('/^\\s*#?(\\d+)\\s+([a-zA-Z]+)\\s+([\\d,]+)/', $line, $m)) {
+                    $rows[] = strtolower($m[2]) . ' ' . str_replace(',', '', $m[3]);
+                }
+            }
+            if (!$rows) throw new RuntimeException('Empty downloaded dictionary');
+            $temporary = tempnam('/tmp', 'manticore-dict-');
+            file_put_contents($temporary, implode("\n", $rows) . "\n");
+            rename($temporary, $path);
+            return $path;
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
     /**
      * @param string|null $file Override dictionary from --text-dictionary.
      * @param string|null $queryTier common|medium|rare to generate plain MATCH terms.
@@ -200,6 +227,7 @@ class TextGenerator {
             throw new InvalidArgumentException('Invalid text word count bounds');
         }
         $path = $file ?? $this->config['text-dictionary'];
+        if ($path === 'auto') $path = self::automaticDictionary();
         if ($this->mode === 'legacy' && $queryTier === null) {
             return QueryGenerator::generateRandomText($minWords, $maxWords, $path);
         }

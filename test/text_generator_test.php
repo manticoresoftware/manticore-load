@@ -98,6 +98,33 @@ try {
     check((bool)preg_match('/\.\s+[A-Z]/', $caps), 'Words after sentence boundaries must be capitalized');
     check((new TextGenerator(['text-model' => 'realistic']))->generate(0, 0) === '',
         'Zero-length documents must not require a dictionary download');
+    // Optional live smoke test, for checking the pinned upstream dictionary.
+    // Intentionally not part of the default offline test suite.
+    if (getenv('MANTICORE_LOAD_LIVE_DICTIONARY_TEST') === '1') {
+        $path = '/tmp/manticore-load-english-frequency.txt';
+        $original = is_file($path) ? file_get_contents($path) : null;
+        $url = getenv('MANTICORE_LOAD_DICTIONARY_URL');
+        try {
+            putenv('MANTICORE_LOAD_DICTIONARY_URL');
+            @unlink($path);
+            $start = microtime(true);
+            $live = new TextGenerator(['text-model' => 'realistic', 'seed' => 42]);
+            $text = $live->generate(100, 100);
+            check(is_file($path), 'Live download must create a dictionary');
+            $contents = file_get_contents($path);
+            $lines = substr_count($contents, "\n");
+            check($lines >= 200000, "Expected 200k+ words from upstream; got $lines");
+            check(count(explode(' ', $text)) === 100, 'Live dictionary must produce 100 words');
+            echo sprintf("Live dictionary: %d words, %.2fs, peak RAM %.1f MiB\n",
+                $lines, microtime(true) - $start, memory_get_peak_usage(true) / 1048576);
+        } finally {
+            if ($url !== false) putenv('MANTICORE_LOAD_DICTIONARY_URL=' . $url);
+            else putenv('MANTICORE_LOAD_DICTIONARY_URL');
+            if ($original === null) @unlink($path);
+            else file_put_contents($path, $original);
+        }
+    }
+
     check((new TextGenerator(['text-model' => 'legacy']))->generate(3, 3) !== '',
         'Legacy text generation must remain available');
     echo "Text generator tests passed\n";

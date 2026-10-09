@@ -179,6 +179,9 @@ class TextGenerator {
                         }
                     }
                 }
+            } catch (Throwable $error) {
+                @unlink($tmp);
+                throw $error;
             } finally {
                 fclose($source);
                 fclose($out);

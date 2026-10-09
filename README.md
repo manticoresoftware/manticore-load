@@ -361,8 +361,9 @@ Contributions are welcome! Please open issues or submit pull requests on GitHub.
 
 ### More realistic synthetic text
 
-The default `<text/MIN/MAX>` behavior is unchanged. To generate realistic
-random text, opt in with `--text-model=realistic`:
+By default, `<text/MIN/MAX>` generates text by selecting words uniformly
+from the built-in vocabulary. To generate text with more realistic word
+frequencies and document structure, use `--text-model=realistic`:
 
 ```bash
 manticore-load --text-model=realistic --seed=42 \

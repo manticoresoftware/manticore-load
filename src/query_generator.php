@@ -374,8 +374,19 @@ class QueryGenerator {
                 ];
                 
             case 'text':
+                if (count($parts) === 4 && in_array($parts[1], ['common', 'medium', 'rare'], true)) {
+                    if (!ctype_digit($parts[2]) || !ctype_digit($parts[3]) || (int)$parts[2] > (int)$parts[3]) {
+                        throw new Exception("Text frequency pattern requires format: text/common|medium|rare/min_words/max_words");
+                    }
+                    return [
+                        'type' => 'text',
+                        'frequency_tier' => $parts[1],
+                        'min_words' => (int)$parts[2],
+                        'max_words' => (int)$parts[3]
+                    ];
+                }
                 if (count($parts) !== 3) {
-                    throw new Exception("Text pattern requires format: text/min_words/max_words or text/{path/to/file}/min_words/max_words");
+                    throw new Exception("Text pattern requires format: text/min_words/max_words, text/common|medium|rare/min_words/max_words, or text/{path/to/file}/min_words/max_words");
                 }
                 return [
                     'type' => 'text',
@@ -472,7 +483,8 @@ class QueryGenerator {
                 return $this->text_generator->generate(
                     $pattern['min_words'] ?? 20,
                     $pattern['max_words'] ?? 300,
-                    $pattern['file_path'] ?? null
+                    $pattern['file_path'] ?? null,
+                    $pattern['frequency_tier'] ?? null
                 );
                 
             case 'int':

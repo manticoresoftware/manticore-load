@@ -551,6 +551,16 @@ class Configuration implements ArrayAccess {
             "--total=10000 \\\n" .
             "--load=\"SELECT * FROM test WHERE MATCH('<text/1/1>')\"\n\n" .
            
+            "# --realistic: create a table and insert 100,000 documents:\n" .
+            "manticore-load --realistic \\\n" .
+            "--drop --threads=4 --batch-size=1000 --total=100000 \\\n" .
+            "--init=\"CREATE TABLE realistic_docs(body text)\" \\\n" .
+            "--load=\"INSERT INTO realistic_docs(id,body) VALUES(<increment>,'<text/50/300>')\"\n\n" .
+            "# --realistic: run 1,000 search queries with frequency-weighted words:\n" .
+            "manticore-load --realistic \\\n" .
+            "--threads=4 --total=1000 \\\n" .
+            "--load=\"SELECT * FROM realistic_docs WHERE MATCH('<text/1/1>') LIMIT 20\"\n\n" .
+            
             "# First process inserts data, second process runs queries simultaneously\n" .
             "manticore-load \\\n" .
             "--host=127.0.0.1 \\\n" .

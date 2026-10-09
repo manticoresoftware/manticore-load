@@ -175,7 +175,7 @@ class QueryGenerator {
      */
     public function __construct(Configuration $config, $main_script_path) {
         // Set fixed seed for random number generation
-        srand((int)($config->get('seed') ?? 42));
+        srand(42);
         $this->text_generator = new TextGenerator($config);
         
         $this->config = $config;
@@ -871,10 +871,10 @@ class QueryGenerator {
     }
 
     private function runCacheWorker($load_index, $start_row, $rows, $cache_file_name, $worker_index, $progress_file) {
-        srand((int)($this->config->get('seed') ?? 42) + $worker_index);
+        srand(42 + $worker_index);
         $this->text_generator->reseedWorker($worker_index);
         if (function_exists('mt_srand')) {
-            mt_srand((int)($this->config->get('seed') ?? 42) + $worker_index);
+            mt_srand(42 + $worker_index);
         }
 
         $this->initializeIncrementCountersForRange($load_index, $start_row);
